@@ -1,0 +1,13 @@
+{
+  "name": "readpanda-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "start": "concurrently \"npm:start --workspace=app\" \"npm:start --workspace=portal\" \"npm:start --workspace=api\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
