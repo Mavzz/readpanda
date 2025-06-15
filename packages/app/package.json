@@ -8,7 +8,6 @@
   "scripts": {
     "start": "npx expo run:android"
   },
-
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.1.2",
     "@react-native-firebase/app": "^22.2.0",

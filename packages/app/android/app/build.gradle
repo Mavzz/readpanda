@@ -150,10 +150,6 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
-    implementation 'androidx.credentials:credentials:1.5.0'
-    implementation 'com.google.android.libraries.identity.googleid:googleid:1.1.1'
-    implementation 'com.google.android.gms:play-services-auth:21.3.0' // Use the latest version
-    implementation 'com.google.android.gms:play-services-auth-api-phone:18.2.0' // Use the latest version
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";
