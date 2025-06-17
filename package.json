@@ -5,7 +5,7 @@
     "packages/*"
   ],
   "scripts": {
-    "start": "concurrently \"npm:start --workspace=readpanda\" \"npm:start --workspace=readpanda-writer-portal\" \"npm:start --workspace=readpanda-backend-main\""
+    "start": "concurrently \"npm:start --workspace=readpanda-writer-portal\" \"npm:start --workspace=readpanda-backend-main\""
   },
   "devDependencies": {
     "concurrently": "^9.1.2"
