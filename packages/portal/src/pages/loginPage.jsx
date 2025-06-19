@@ -5,6 +5,7 @@ import { getBackendUrl, encryptedPassword } from "../utils/Helper";
 const LoginPage = ({ setIsLoggedIn }) => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  let status, response;
 
   // Handle login logic
   const handleLogin = async () => {
@@ -19,8 +20,22 @@ const LoginPage = ({ setIsLoggedIn }) => {
         }
     ));
 
-      setIsLoggedIn(true);
-      console.log("Login successful with email:", email);
+    if (response.token) {
+      localStorage.setItem("token", response.token);
+      localStorage.setItem("username", response.username);
+
+      if (status = 200) {
+        setIsLoggedIn(true);
+        console.log("Login successful with email:", email);
+      }
+      else {
+        alert("Login failed");
+      }
+
+    } else {
+      alert("Login failed");
+    }
+
     }
     else {
       console.log("Please enter both email and password");
