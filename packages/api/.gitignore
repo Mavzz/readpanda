@@ -16,6 +16,6 @@ yarn-error.*
 
 # local env files
 .env*.local
-.env
+packages/api/.env
 
-Firebase/Credentials/serviceAccountKey.json
+firebase/credentials/serviceAccountKey.json
