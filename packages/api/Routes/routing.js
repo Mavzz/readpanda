@@ -1,7 +1,7 @@
 import express from 'express';
-import { createUser, loginUser, getUsers, googleAuth } from "../Controller/users.js";
-import { getUserPreferences, updateUserPreferences } from "../Controller/user_preferences.js";
-import { fileuploader } from '../Controller/fileController.js';
+import { createUser, loginUser, getUsers, googleAuth } from "../controller/users.js";
+import { getUserPreferences, updateUserPreferences } from "../controller/user_preferences.js";
+import { fileuploader } from '../controller/fileController.js';
 import multer from 'multer';
 const upload = multer();
 

@@ -1,4 +1,4 @@
-export const usePost = async (url, body = {}, headers = {}) => {
+export const usePost = async (url, body = {}, headers = {}, signal = null) => {
 
   const response =  await fetch(url, {
       method: "POST",
@@ -7,6 +7,7 @@ export const usePost = async (url, body = {}, headers = {}) => {
         ...headers,
       },
       body: JSON.stringify(body),
+      signal: signal,
     });
 
   if (!response.ok) {

@@ -3,7 +3,7 @@ const { MongoClient, ServerApiVersion } = require("mongodb");
 exports.connectToMongoDB = async () => {
 
   const uri =
-    "mongodb+srv://aditya:jSPDccBW0m12Oey3@cluster0.hjqo2.mongodb.net";
+    "";
 
   // Create a MongoClient with a MongoClientOptions object to set the Stable API version
   const client = new MongoClient(uri, {
