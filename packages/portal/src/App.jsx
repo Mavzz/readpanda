@@ -4,6 +4,7 @@ import LoginPage from './pages/loginPage';
 import DashboardPage from './pages/dashboardPage';
 import MyBooksPage from './pages/myBooksPage';
 import UploadBookPage from './pages/uploadBookPage';
+import { Routes, Route, Link, useNavigate } from 'react-router-dom'; // Import routing components
 
 // --- MOCK DATA ---
 // In a real application, this data would come from your API
@@ -21,17 +22,18 @@ const mockBooks = [
 ];
 
 // --- Main App Layout & Routing ---
-const PortalLayout = ({ user, onLogout, children, setPage, currentPage }) => {
+const PortalLayout = ({ user, onLogout, children }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const navigate = useNavigate(); // Hook for programmatic navigation
 
-  const NavLink = ({ page, icon, children: linkChildren }) => (
+  const NavLink = ({ to, icon, children: linkChildren }) => (
     <button
       onClick={() => {
-        setPage(page);
+        navigate(to); // Use navigate from react-router-dom
         setSidebarOpen(false);
       }}
       className={`flex items-center w-full px-4 py-2 text-sm font-medium rounded-md transition-colors duration-150 ${
-        currentPage === page
+        window.location.pathname === to
           ? 'bg-indigo-600 text-white'
           : 'text-gray-300 hover:bg-gray-700 hover:text-white'
       }`}
@@ -49,9 +51,10 @@ const PortalLayout = ({ user, onLogout, children, setPage, currentPage }) => {
           <span className="text-2xl font-bold">ReadPanda</span>
         </div>
         <nav className="flex-1 px-4 py-6 space-y-2">
-          <NavLink page="dashboard" icon={<HomeIcon />}>Dashboard</NavLink>
-          <NavLink page="my-books" icon={<BookIcon />}>My Books</NavLink>
-          <NavLink page="upload" icon={<UploadIcon />}>Upload Book</NavLink>
+          {/* Use 'to' prop for React Router paths */}
+          <NavLink to="/dashboard" icon={<HomeIcon />}>Dashboard</NavLink>
+          <NavLink to="/my-books" icon={<BookIcon />}>My Books</NavLink>
+          <NavLink to="/upload" icon={<UploadIcon />}>Upload Book</NavLink>
         </nav>
         <div className="px-4 py-4 border-t border-gray-700">
             <button
@@ -91,32 +94,26 @@ const PortalLayout = ({ user, onLogout, children, setPage, currentPage }) => {
 // --- Main App Component ---
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [currentPage, setCurrentPage] = useState('dashboard');
+  const user = mockUser; // Your mock user
+  const books = mockBooks; // Your mock books
 
   //const handleLogin = () => setIsLoggedIn(true);
   const handleLogout = () => setIsLoggedIn(false);
-
-  // Simple router
-  const renderPage = () => {
-    switch (currentPage) {
-      case 'dashboard':
-        return <DashboardPage bookLength={mockBooks.length} />;
-      case 'my-books':
-        return <MyBooksPage mockBooks={mockBooks}/>;
-      case 'upload':
-        return <UploadBookPage />;
-      default:
-        return <DashboardPage bookLength={mockBooks.length} />;
-    }
-  };
 
   if (!isLoggedIn) {
     return <LoginPage setIsLoggedIn={setIsLoggedIn} />;
   }
 
   return (
-    <PortalLayout user={mockUser} onLogout={handleLogout} setPage={setCurrentPage} currentPage={currentPage}>
-      {renderPage()}
+    <PortalLayout user={user} onLogout={handleLogout}>
+      <Routes> {/* Define your routes here */}
+        <Route path="/" element={<DashboardPage bookLength={books.length} />} />
+        <Route path="/dashboard" element={<DashboardPage bookLength={books.length} />} />
+        <Route path="/my-books" element={<MyBooksPage mockBooks={books} />} />
+        <Route path="/upload" element={<UploadBookPage />} />
+        {/* Add a catch-all route for 404 */}
+        <Route path="*" element={<div>404 Not Found</div>} />
+      </Routes>
     </PortalLayout>
   );
 }

@@ -1,6 +1,6 @@
-import client from "../Database/config.js";
+import client from "../database/config.js";
 import dotenv from "dotenv";
-import { checkToken, getUserId } from "../Utilities/helper.js";
+import { checkToken, getUserId } from "../utilities/helper.js";
 
 dotenv.config();
 

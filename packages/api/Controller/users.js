@@ -1,5 +1,5 @@
-import client from '../Database/config.js';
-import { cryptPassword, decryptPassword, generateUserUid, LOGIN_TYPES, generateJWT } from '../Utilities/helper.js';
+import client from '../database/config.js';
+import { cryptPassword, decryptPassword, generateUserUid, LOGIN_TYPES, generateJWT } from '../utilities/helper.js';
 import CryptoJS from "crypto-js";
 import dotenv from 'dotenv';
 import jwt from "jsonwebtoken";

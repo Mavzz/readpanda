@@ -1,11 +1,8 @@
 import CryptoJS  from "crypto-js";
-import { SECRET_KEY } from "@env";
-import dotenv from 'dotenv';
-dotenv.config();
 
 // Encrypt the password
 const encryptedPassword = (password) => {
-  return CryptoJS.AES.encrypt(password, SECRET_KEY).toString();
+  return CryptoJS.AES.encrypt(password, import.meta.env.VITE_CRYPTO_SECRET).toString();
 };
 
 const getBackendUrl = async(path = "") => {
@@ -15,7 +12,7 @@ const getBackendUrl = async(path = "") => {
   let backendUrl;
     try {
       
-      const ip = "192.168.0.104" //await Network.getIpAddressAsync();
+      const ip = import.meta.env.VITE_BACKEND_BASE_URL //"192.168.0.102" //await Network.getIpAddressAsync();
       const port = 3000; // your backend port
       backendUrl = `http://${ip}:${port}${path}`;
 

@@ -1,11 +1,11 @@
 import express from 'express';
 import bodyParser from 'body-parser';
-import routes from './Routes/routing.js';
+import routes from './routes/routing.js';
 import dotenv from 'dotenv';
-import client from './Database/config.js';
+import client from './database/config.js';
 import fs from 'fs';
 import http from 'http';
-import { getLocalIp } from './Utilities/helper.js';
+import { getLocalIp } from './utilities/helper.js';
 
 
 dotenv.config();
@@ -18,6 +18,7 @@ app.use(bodyParser.json());
 app.use((req, res, next) =>{
   res.setHeader("access-control-allow-origin", "*");
   res.setHeader("access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization"); // Corrected header for allowed request headers
   res.setHeader("access-control-expose-headers", "Content-Type, Authorization");
   next();
 })

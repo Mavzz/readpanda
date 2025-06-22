@@ -1,6 +1,6 @@
 import bcrypt from 'bcrypt';
 import jwt from "jsonwebtoken";
-import client from '../Database/config.js';
+import client from '../database/config.js';
 import { v4 as uuidv4 } from "uuid";
 import os from 'os';
 
