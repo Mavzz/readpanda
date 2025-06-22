@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
 
-dotenv.config();
+dotenv.config({path: './.env.local'});
 
 const OAuthclient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 

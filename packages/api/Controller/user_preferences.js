@@ -2,7 +2,7 @@ import client from "../database/config.js";
 import dotenv from "dotenv";
 import { checkToken, getUserId } from "../utilities/helper.js";
 
-dotenv.config();
+dotenv.config({path: './.env.local'});
 
 /**
  * Get all users from the database.

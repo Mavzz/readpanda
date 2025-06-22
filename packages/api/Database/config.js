@@ -2,7 +2,7 @@ import pkg from 'pg';
 const { Client } = pkg;
 import dotenv from 'dotenv';
 
-dotenv.config();
+dotenv.config({path: './.env.local'});
 
 const client = new Client({
   user: process.env.PG_USER,

@@ -1,37 +1,42 @@
 // packages/api/Service/firebaseStorageService.js
+import { initializeApp } from "firebase/app";
+import { getStorage } from "firebase/storage";
 import admin from 'firebase-admin';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-dotenv.config();
+dotenv.config({path: './.env.local'});
 
-// Fix for __dirname in ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+let app;
 
-// IMPORTANT: Replace with the actual relative path to your Firebase service account key
-// This file should NEVER be committed to version control directly.
-// The .gitignore in packages/api already lists it as ignored:
-// firebase/credentials/serviceAccountKey.json
-const serviceAccountPath = path.resolve(__dirname, '../../api/firebase/credentials/serviceAccountKey.json');
+const firebaseConfig = {
+  apiKey: process.env.FIREBASE_API_KEY,
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.FIREBASE_PROJECT_ID,
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.FIREBASE_APP_ID,
+  measurementId: process.env.FIREBASE_MEASUREMENT_ID
+};
+
 
 try {
-  // Initialize Firebase Admin SDK if not already initialized
-  if (!admin.apps.length) {
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccountPath),
-      storageBucket: process.env.FIREBASE_STORAGE_BUCKET // Your Firebase Storage Bucket URL
-    });
-    console.log("Firebase Admin SDK initialized successfully.");
-  }
+
+  // Initialize Firebase
+  app = initializeApp(firebaseConfig);
+  console.log("Firebase Admin SDK initialized successfully.");
+  
 } catch (error) {
   console.error("Firebase Admin SDK initialization failed:", error);
   // It's crucial to handle this error properly in production
   // e.g., exit the process or mark the service as unavailable
 }
 
-const bucket = admin.storage().bucket();
+
+// Initialize Cloud Storage and get a reference to the service
+const storage = getStorage(app);
+
 
 /**
  * Uploads a file buffer to Firebase Storage.
