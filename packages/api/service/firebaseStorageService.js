@@ -13,7 +13,7 @@ const __dirname = path.dirname(__filename);
 // IMPORTANT: Replace with the actual relative path to your Firebase service account key
 // This file should NEVER be committed to version control directly.
 // The .gitignore in packages/api already lists it as ignored:
-// Firebase/Credentials/serviceAccountKey.json
+// firebase/credentials/serviceAccountKey.json
 const serviceAccountPath = path.resolve(__dirname, '../../api/firebase/credentials/serviceAccountKey.json');
 
 try {
