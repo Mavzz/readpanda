@@ -25,4 +25,8 @@ router.post("/auth/google", googleAuth); // Placeholder for Google authenticatio
 
 // Route to upload a file
 router.post("/upload", upload.single('file'), fileuploader);
+
+// Route to upload file metadata
+router.post("/books/metadata");
+
 export default router;

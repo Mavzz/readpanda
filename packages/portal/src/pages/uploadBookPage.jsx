@@ -1,8 +1,10 @@
 import { useState } from "react";
 import SuggestionModal from "../components/modals";
 import { SparklesIcon } from "../components/icons";
-import { useFileUpload as UseFileUpload } from "../services/useFileUpload";
 import { getBackendUrl } from "../utils/Helper";
+import { usePost as UsePOST } from "../services/usePost";
+import { storage } from '../firebaseConfig'; // Import your Firebase storage instance
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'; // Firebase Storage SDK functions
 
 const UploadBookPage = () => {
     // Form state
@@ -138,32 +140,27 @@ const UploadBookPage = () => {
                 Authorization: `Bearer ${token}`
             };
 
-            const coverUploadUrl = await getBackendUrl("/upload");
-            const coverResponse = await UseFileUpload(
-                coverUploadUrl,
-                coverFile,
-                "file",
-                headers
-            );
-            console.log("Cover image upload response:", coverResponse.response.link);
-            setUploadMessage(`Cover uploaded to: ${coverResponse.response.link}`);
+            // 1. Upload Cover Image directly to Firebase Storage
+            const coverStorageRef = ref(storage, `books/covers/${Date.now()}_${coverFile.name}`);
+            const coverSnapshot = await uploadBytes(coverStorageRef, coverFile); // Upload the file
+            const coverPublicUrl = await getDownloadURL(coverSnapshot.ref); // Get the public URL
+            console.log("Cover image uploaded to:", coverPublicUrl);
+            setUploadMessage(`Cover uploaded to: ${coverPublicUrl}`);
 
-            // Upload Book Manuscript
-            const manuscriptUploadUrl = await getBackendUrl("/upload");
-            const manuscriptResponse = await UseFileUpload(
-                manuscriptUploadUrl,
-                manuscriptFile,
-                "file",
-                headers
-            );
-            console.log(
-                "Manuscript upload response:",
-                manuscriptResponse.response.link
-            );
-            setUploadMessage(
-                (prev) =>
-                    prev + `Manuscript uploaded to: ${manuscriptResponse.response.link}`
-            );
+            // 2. Upload Book Manuscript directly to Firebase Storage
+            const manuscriptStorageRef = ref(storage, `books/manuscripts/${Date.now()}_${manuscriptFile.name}`);
+            const manuscriptSnapshot = await uploadBytes(manuscriptStorageRef, manuscriptFile);
+            const manuscriptPublicUrl = await getDownloadURL(manuscriptSnapshot.ref);
+            console.log("Manuscript uploaded to:", manuscriptPublicUrl);
+            setUploadMessage(prev => prev + `\nManuscript uploaded to: ${manuscriptPublicUrl}`);
+            
+            await UsePOST(await getBackendUrl("/books/metadata"), {
+                title,
+                description,
+                genre,
+                coverUrl: coverPublicUrl,
+                manuscriptUrl: manuscriptPublicUrl,
+            }, headers);
 
             setUploadMessage("Book published successfully!");
             // Clear form or redirect after successful upload
