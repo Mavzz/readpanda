@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { usePost as UsePOST } from "../services/usePost";
+import { useGet as UseGET } from "../services/useGet";
 import { getBackendUrl, encryptedPassword } from "../utils/Helper";
 import { GoogleLogin } from "@react-oauth/google"; // Import GoogleLogin component
 import { useNavigate } from 'react-router-dom'; // Import useNavigate
@@ -98,8 +99,29 @@ const LoginPage = ({ setIsLoggedIn }) => {
       console.log("Google Sign-in Status:", status);
       if (status === 201 || status === 200) {
         // 201 for new user, 200 for existing
+
+        const headers = {
+                Authorization: `Bearer ${response.token}`
+              };
+
+        const { response: genreResponse } = await UseGET(
+          await getBackendUrl("/genres"),
+          headers
+        );
+
+        console.log("Genres:", genreResponse.genre);
+
+        const { response: subgenreResponse } = await UseGET(
+          await getBackendUrl("/subgenres"),
+          headers
+        );
+        
+        console.log("Subgenres:", subgenreResponse);
         localStorage.setItem("token", response.token);
         localStorage.setItem("username", response.username);
+        localStorage.setItem("genres", JSON.stringify(genreResponse.genre));
+        localStorage.setItem("subgenres", JSON.stringify(subgenreResponse.subgenre));
+
         setIsLoggedIn(true);
         console.log("Google Sign-in successful:", response.username);
         navigate("/dashboard");

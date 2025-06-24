@@ -107,3 +107,61 @@ export const updateUserPreferences = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+export const getGenres = async (req, res) => {
+  try {
+    const authHeader = req.header("authorization");
+    const token = authHeader && authHeader.split(" ")[1]; // Bearer <token>
+
+    const genre = [];
+
+    if (checkToken(token, process.env.JWT_SECRET)) {
+      const genres = await client.query(
+        "SELECT DISTINCT genre FROM preferences ORDER BY genre"
+      );
+      // Transform the result into an object with genre as key and empty array as value
+      genres.rows.forEach((row) => {
+        genre.push({
+          value: row.genre,
+          label: row.genre,
+        });
+      });
+
+      res.status(200).json({ genre: genre });
+    } else {
+      res.status(401).json({ error: "Unauthorized" });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+export const getSubgenres = async (req, res) => {
+  try {
+    const authHeader = req.header("authorization");
+    const token = authHeader && authHeader.split(" ")[1]; // Bearer <token>
+
+    const subgenre = [];
+
+    if (checkToken(token, process.env.JWT_SECRET)) {
+      const { genre } = req.query;
+      const subgenres = await client.query(
+        "SELECT distinct subgenre, genre FROM preferences ORDER BY subgenre"
+      );
+      // Transform the result into an object with subgenre as key and empty array as value
+      subgenres.rows.forEach((row) => {
+        subgenre.push({
+          value: row.subgenre,
+          label: row.subgenre,
+          genre: row.genre,
+        });
+      });
+
+      res.status(200).json({ subgenre: subgenre });
+    } else {
+      res.status(401).json({ error: "Unauthorized" });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};

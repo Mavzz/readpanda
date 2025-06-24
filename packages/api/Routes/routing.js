@@ -1,6 +1,6 @@
 import express from 'express';
 import { createUser, loginUser, getUsers, googleAuth } from "../controller/users.js";
-import { getUserPreferences, updateUserPreferences } from "../controller/user_preferences.js";
+import { getUserPreferences, updateUserPreferences, getGenres, getSubgenres } from "../controller/user_preferences.js";
 import { fileuploader } from '../controller/fileController.js';
 import multer from 'multer';
 const upload = multer();
@@ -28,5 +28,12 @@ router.post("/upload", upload.single('file'), fileuploader);
 
 // Route to upload file metadata
 router.post("/books/metadata");
+
+// New route to get genres
+router.get("/genres", getGenres);
+
+// New route to get subgenres
+router.get("/subgenres", getSubgenres);
+
 
 export default router;

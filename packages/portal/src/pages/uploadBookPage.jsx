@@ -10,7 +10,8 @@ const UploadBookPage = () => {
     // Form state
     const [title, setTitle] = useState("");
     const [description, setDescription] = useState("");
-    const [genre, setGenre] = useState("Science Fiction");
+    const [genre, setGenre] = useState("");
+    const [subGenre, setSubGenre] = useState(""); // Assuming subgenre is also needed
     const [coverPreview, setCoverPreview] = useState(null);
     const [manuscriptName, setManuscriptName] = useState("");
 
@@ -30,6 +31,11 @@ const UploadBookPage = () => {
     const [isUploading, setIsUploading] = useState(false);
     const [uploadMessage, setUploadMessage] = useState("");
     const [uploadError, setUploadError] = useState("");
+
+    // Genre options (could be fetched from an API or defined statically)
+    const subgenres = JSON.parse(localStorage.getItem("subgenres"));
+    const genreOptions = localStorage.getItem("genres") ? JSON.parse(localStorage.getItem("genres")) : [];
+    const subgenreOptions = subgenres ? subgenres.filter((option) => option.genre === genre) : [];
 
     /**
      * Calls the Gemini API to generate content.
@@ -153,7 +159,7 @@ const UploadBookPage = () => {
             const manuscriptPublicUrl = await getDownloadURL(manuscriptSnapshot.ref);
             console.log("Manuscript uploaded to:", manuscriptPublicUrl);
             setUploadMessage(prev => prev + `\nManuscript uploaded to: ${manuscriptPublicUrl}`);
-            
+
             await UsePOST(await getBackendUrl("/books/metadata"), {
                 title,
                 description,
@@ -166,7 +172,8 @@ const UploadBookPage = () => {
             // Clear form or redirect after successful upload
             setTitle("");
             setDescription("");
-            setGenre("Science Fiction");
+            setGenre("");
+            setSubGenre("");
             setCoverFile(null);
             setCoverPreview(null);
             setManuscriptFile(null);
@@ -273,19 +280,53 @@ const UploadBookPage = () => {
                             >
                                 Genre
                             </label>
-                            <select
-                                id="genre"
-                                name="genre"
-                                value={genre}
-                                onChange={(e) => setGenre(e.target.value)}
-                                className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
-                            >
-                                <option>Science Fiction</option>
-                                <option>Fantasy</option>
-                                <option>Thriller</option>
-                                <option>Romance</option>
-                                <option>Non-Fiction</option>
-                            </select>
+                            <div className="relative">
+                                <select
+                                    id="genre"
+                                    name="genre"
+                                    value={genre}
+                                    onChange={(e) => setGenre(e.target.value)}
+                                    className="appearance-none mt-1 block w-full pl-3 pr-10 py-2 text-base border border-gray-300 text-gray-900 bg-white focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
+                                >
+                                    <option value="">Select a genre</option>
+                                    {genreOptions.map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </select>
+                                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
+                                    <svg className="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="none">
+                                        <path d="M7 7l3-3 3 3m0 6l-3 3-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="mt-6">
+                            <label htmlFor="subGenre" className="block text-sm font-medium text-gray-700">
+                                Subgenre
+                            </label>
+                            <div className="relative">
+                                <select
+                                    id="subGenre"
+                                    name="subGenre"
+                                    value={subGenre} // Assuming subgenre is also stored in genre for simplicity
+                                    onChange={(e) => setSubGenre(e.target.value)}
+                                    className="appearance-none mt-1 block w-full pl-3 pr-10 py-2 text-base border border-gray-300 text-gray-900 bg-white focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
+                                >
+                                    <option value="">Select a subgenre</option>
+                                    {subgenreOptions.map((option) => (
+                                        <option key={option.value} value={option.value}>
+                                            {option.label}
+                                        </option>
+                                    ))}
+                                </select>
+                                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
+                                    <svg className="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="none">
+                                        <path d="M7 7l3-3 3 3m0 6l-3 3-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                </div>
+                            </div>
                         </div>
                         <div className="mt-6">
                             <button

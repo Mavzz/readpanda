@@ -1,5 +1,4 @@
-
-export const useGet = async (url, headers = {}) => {
+export const useGet = async (url, headers = {}, signal = null) => {
 
   const response =  await fetch(url, {
       method: "GET",
@@ -7,6 +6,7 @@ export const useGet = async (url, headers = {}) => {
         "Accept": "application/json",
         ...headers,
       },
+      signal: signal,
     });
 
   if (!response.ok) {
@@ -17,4 +17,3 @@ export const useGet = async (url, headers = {}) => {
   return { status: response.status, response: await response.json()}
 
 }
-
