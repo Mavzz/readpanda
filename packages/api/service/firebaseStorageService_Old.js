@@ -1,24 +1,28 @@
 // packages/api/Service/firebaseStorageService.js
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { initializeApp } from "firebase/app";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import dotenv from 'dotenv';
 import admin from 'firebase-admin';
-import { generateUserUid } from '../utilities/helper.js';
+
 dotenv.config({path: './.env.local'});
 
-// Fix for __dirname in ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+let app;
 
-const serviceAccountPath = path.resolve(__dirname, '../firebase/credentials/serviceAccountKey.json');
+const firebaseConfig = {
+  apiKey: process.env.FIREBASE_API_KEY,
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.FIREBASE_PROJECT_ID,
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.FIREBASE_APP_ID,
+  measurementId: process.env.FIREBASE_MEASUREMENT_ID
+};
+
 
 try {
 
   // Initialize Firebase
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccountPath),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-  });
+  app = initializeApp(firebaseConfig);
   console.log("Firebase Admin SDK initialized successfully.");
   
 } catch (error) {
@@ -29,7 +33,8 @@ try {
 
 
 // Initialize Cloud Storage and get a reference to the service
-const bucket = admin.storage().bucket();
+const storage = getStorage(app);
+
 
 /**
  * Uploads a file buffer to Firebase Storage.
@@ -46,16 +51,27 @@ export const uploadFileToFirebase = async (file, destinationPath) => {
     throw new Error("No destination path provided for upload.");
   }
 
-  const token = generateUserUid();
+  const storageRef = ref(storage, destinationPath);
+  const snapshot = await uploadBytes(storageRef, file);
+  const publicUrl = await getDownloadURL(snapshot.ref);
+
+  return publicUrl;
+};
+
+export const uploadFileToFirebases = async (file, destinationPath) => {
+  if (!file || !file.buffer) {
+    throw new Error("No file buffer provided for upload.");
+  }
+
+  if (!destinationPath) {
+    throw new Error("No destination path provided for upload.");
+  }
 
   const fileUpload = bucket.file(destinationPath);
 
   const stream = fileUpload.createWriteStream({
     metadata: {
       contentType: file.mimetype,
-      metadata: {
-        firebaseStorageDownloadTokens: token,
-      },
     },
   });
 
@@ -67,20 +83,7 @@ export const uploadFileToFirebase = async (file, destinationPath) => {
 
     stream.on('finish', async () => {
       try {
-        // Make the file publicly accessible
-        await fileUpload.makePublic();
-
-        // Get the public URL of the uploaded file
-        // Note: The token is used to generate a download URL that includes the token for access
-        // This is necessary for files that are not publicly accessible by default
-        // The URL format is: https://storage.googleapis.com/v0/b/{bucket.name}/o/{encodedPath}?alt=media&token={token}
-        // where {encodedPath} is the URL-encoded path of the file in the bucket
-        // and {token} is the unique token generated for this file
-        // This URL can be used to access the file directly
-
-        const publicUrls = fileUpload.publicUrl();
-
-        const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(destinationPath)}?alt=media&token=${token}`;
+        const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileUpload.name}`;
         resolve(publicUrl);
       } catch (publicError) {
         console.error("Error getting download URL:", publicError);

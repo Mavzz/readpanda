@@ -36,6 +36,16 @@ export const checkToken = (token, JWT_SECRET) => {
   }
 };
 
+export const decodeToken = (token, JWT_SECRET) => {
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return decoded;
+  } catch (error) {
+    console.error("Error decoding token:", error);
+    return null;
+  }
+};
+
 export const generateUserUid = () => {
   return uuidv4(); // Generates a random UUID, e.g., '1b9d67b2-ad0b-426c-8472-a72a1e0501a9'
 }

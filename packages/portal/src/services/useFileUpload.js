@@ -8,11 +8,8 @@
  * @param {object} headers - Optional additional headers.
  * @returns {Promise<object>} An object containing the status and response from the server.
  */
-export const useFileUpload = async (url, file, fieldName = 'file', headers = {}) => {
+export const useFileUpload = async (url, formData, headers = {}) => {
 
-    const formData = new FormData();
-    formData.append(fieldName, file); // Append the file to FormData with the specified fieldName
-    
     const response = await fetch(url, {
         method: "POST",
         headers: {

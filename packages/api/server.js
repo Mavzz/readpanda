@@ -8,7 +8,7 @@ import http from 'http';
 import { getLocalIp } from './utilities/helper.js';
 
 
-dotenv.config();
+dotenv.config({path: './.env.local'});
 
 const app = express();
 

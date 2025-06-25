@@ -5,14 +5,9 @@ import dotenv from 'dotenv';
 import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
 
-dotenv.config();
+dotenv.config({path: './.env.local'});
 
 const OAuthclient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-
-// Initialize Firebase Admin SDK
-/*admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});*/
 
 /**
  * Get all users from the database.
@@ -119,7 +114,7 @@ export const loginUser = async (req, res) => {
 };
 
 /**
- * Log in a user and generate a JWT token.
+ * Login user using google SSO and generate a JWT token.
  * @param {Object} req - The request object.
  * @param {Object} res - The response object.
  */
@@ -135,7 +130,7 @@ export const googleAuth = async (req, res) => {
     audience: process.env.GOOGLE_CLIENT_ID, // This should match the client ID used on frontend
   });
     const payload = ticket.getPayload();
-    const { email, name, sub: id } = payload; // sub is the unique identifier for the user
+    const { email, name, sub: id, picture } = payload; // sub is the unique identifier for the user
 
     // Check if user already exists in the database
     const userCheck = await client.query(
@@ -148,7 +143,7 @@ export const googleAuth = async (req, res) => {
     const newUserUid = generateUserUid();
     if (userCheck.rows.length > 0) {
       
-      return res.status(200).json({ username: userCheck.rows[0].username, token: generateJWT(userCheck.rows[0].uuid) });
+      return res.status(200).json({ username: userCheck.rows[0].username, picture: picture, token: generateJWT(userCheck.rows[0].uuid) });
 
     } else {
       // Create a new user if not exists
@@ -162,8 +157,25 @@ export const googleAuth = async (req, res) => {
     const username = user.username;
 
     // Return the user data and token
-    res.status(201).json({ username: username, token: generateJWT(user.uuid) });
+    res.status(201).json({ username: username, picture: picture, token: generateJWT(user.uuid) });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+};
+
+export const getUserId = async (username) => {
+  try {
+    const userCheck = await client.query(
+      "SELECT * FROM users WHERE username = $1",
+      [username]
+    );
+
+    if (userCheck.rows.length === 0) {
+      throw new Error("User not found");
+    }
+
+    return userCheck.rows[0].uuid;
+  } catch (err) {
+    throw new Error("Error fetching user ID");
   }
 };
