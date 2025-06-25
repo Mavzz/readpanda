@@ -8,11 +8,7 @@ import { Routes, Route, Link, useNavigate } from 'react-router-dom'; // Import r
 
 // --- MOCK DATA ---
 // In a real application, this data would come from your API
-const mockUser = {
-  name: 'Jane Doe',
-  email: 'jane.doe@example.com',
-  avatar: 'https://placehold.co/100x100/E2E8F0/4A5568?text=JD'
-};
+const mockAvatar = 'https://placehold.co/100x100/E2E8F0/4A5568?text=JD';
 
 const mockBooks = [
   { id: 1, title: 'Echoes of the Void', status: 'Live', views: 10234, earnings: 450.20, cover: 'https://placehold.co/150x220/6366F1/FFFFFF?text=Echoes' },
@@ -22,7 +18,7 @@ const mockBooks = [
 ];
 
 // --- Main App Layout & Routing ---
-const PortalLayout = ({ user, onLogout, children }) => {
+const PortalLayout = ({ onLogout, children }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const navigate = useNavigate(); // Hook for programmatic navigation
 
@@ -75,8 +71,8 @@ const PortalLayout = ({ user, onLogout, children }) => {
                 <MenuIcon />
             </button>
             <div className="flex items-center">
-                <span className="mr-3 font-medium">{user.name}</span>
-                <img className="h-10 w-10 rounded-full object-cover" src={user.avatar} alt="User avatar" />
+                <span className="mr-3 font-medium text-gray-500">{localStorage.getItem("username")}</span>
+                <img className="h-10 w-10 rounded-full object-cover" src={localStorage.getItem("avatar") ? localStorage.getItem("avatar") : mockAvatar} alt="User avatar" />
             </div>
         </header>
 
@@ -94,7 +90,6 @@ const PortalLayout = ({ user, onLogout, children }) => {
 // --- Main App Component ---
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const user = mockUser; // Your mock user
   const books = mockBooks; // Your mock books
 
   //const handleLogin = () => setIsLoggedIn(true);
@@ -105,7 +100,7 @@ export default function App() {
   }
 
   return (
-    <PortalLayout user={user} onLogout={handleLogout}>
+    <PortalLayout onLogout={handleLogout}>
       <Routes> {/* Define your routes here */}
         <Route path="/" element={<DashboardPage bookLength={books.length} />} />
         <Route path="/dashboard" element={<DashboardPage bookLength={books.length} />} />

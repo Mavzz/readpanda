@@ -2,7 +2,9 @@ import { useState } from "react";
 import SuggestionModal from "../components/modals";
 import { SparklesIcon } from "../components/icons";
 import { getBackendUrl } from "../utils/Helper";
-import { useFileUpload as UseFileUpload } from "../services/useFileUpload";
+import { usePost as UsePOST } from "../services/usePost";
+import { storage } from '../firebaseConfig'; // Import your Firebase storage instance
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'; // Firebase Storage SDK functions
 
 const UploadBookPage = () => {
     // Form state
@@ -137,41 +139,45 @@ const UploadBookPage = () => {
         setIsUploading(true);
 
         try {
-           
+            // Upload Cover Image
+
             const token = localStorage.getItem("token");
             const headers = {
                 Authorization: `Bearer ${token}`
             };
 
-            const formData = new FormData();
+            // 1. Upload Cover Image directly to Firebase Storage
+            const coverStorageRef = ref(storage, `books/covers/${Date.now()}_${coverFile.name}`);
+            const coverSnapshot = await uploadBytes(coverStorageRef, coverFile); // Upload the file
+            const coverPublicUrl = await getDownloadURL(coverSnapshot.ref); // Get the public URL
+            console.log("Cover image uploaded to:", coverPublicUrl);
+            setUploadMessage(`Cover uploaded to: ${coverPublicUrl}`);
 
-            formData.append("cover", coverFile);
-            formData.append("manuscript", manuscriptFile);
-            formData.append("title", title);
-            formData.append("description", description);
-            formData.append("genre", genre);
-            formData.append("subgenre", subGenre);
+            // 2. Upload Book Manuscript directly to Firebase Storage
+            const manuscriptStorageRef = ref(storage, `books/manuscripts/${Date.now()}_${manuscriptFile.name}`);
+            const manuscriptSnapshot = await uploadBytes(manuscriptStorageRef, manuscriptFile);
+            const manuscriptPublicUrl = await getDownloadURL(manuscriptSnapshot.ref);
+            console.log("Manuscript uploaded to:", manuscriptPublicUrl);
+            setUploadMessage(prev => prev + `\nManuscript uploaded to: ${manuscriptPublicUrl}`);
 
-            // Use the custom hook to upload files
-            // Assuming UseFileUpload is a custom hook that handles file uploads
+            await UsePOST(await getBackendUrl("/books/metadata"), {
+                title,
+                description,
+                genre,
+                coverUrl: coverPublicUrl,
+                manuscriptUrl: manuscriptPublicUrl,
+            }, headers);
 
-            const { status: uploadStatus, response: uploadResponse } = await UseFileUpload(await getBackendUrl("/books/upload"), formData, headers);
-
-            if (uploadStatus === 200) {
-                setUploadMessage("Your book has been successfully uploaded!");
-                setTitle("");
-                setDescription("");
-                setGenre("");
-                setSubGenre("");
-                setCoverPreview(null);
-                setManuscriptName("");
-                setCoverFile(null);
-                setManuscriptFile(null);
-            } else {
-                setUploadError(
-                    `Failed to upload book. Server responded with status ${uploadStatus}: ${uploadResponse.message}`
-                );
-            }
+            setUploadMessage("Book published successfully!");
+            // Clear form or redirect after successful upload
+            setTitle("");
+            setDescription("");
+            setGenre("");
+            setSubGenre("");
+            setCoverFile(null);
+            setCoverPreview(null);
+            setManuscriptFile(null);
+            setManuscriptName("");
         } catch (error) {
             console.error("Error during book upload:", error);
             setUploadError(

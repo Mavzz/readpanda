@@ -119,6 +119,7 @@ const LoginPage = ({ setIsLoggedIn }) => {
         console.log("Subgenres:", subgenreResponse);
         localStorage.setItem("token", response.token);
         localStorage.setItem("username", response.username);
+        localStorage.setItem("avatar", response.picture || ""); // Handle avatar if available
         localStorage.setItem("genres", JSON.stringify(genreResponse.genre));
         localStorage.setItem("subgenres", JSON.stringify(subgenreResponse.subgenre));
 

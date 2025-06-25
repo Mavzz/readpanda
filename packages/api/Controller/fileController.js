@@ -4,29 +4,52 @@
 
 // Import the new Firebase Storage service:
 import { uploadFileToFirebase } from '../service/firebaseStorageService.js';
-import { checkToken } from "../utilities/helper.js";
+import { checkToken, decodeToken } from "../utilities/helper.js";
+import client from '../database/config.js';
 
-export const fileuploader = async (req, res) => {
+/**
+ * Publishes the book and cover image.
+ * @param {Object} req - The request object (with req.userId from middleware).
+ * @param {Object} res - The response object.
+ */
+
+export const publishBook = async (req, res) => {
   const authHeader = req.header("authorization");
   const token = authHeader && authHeader.split(" ")[1]; // Bearer <token>
 
   try {
     if (checkToken(token, process.env.JWT_SECRET)) {
-      if (!req.file) {
-        return res.status(400).send({ message: "No file uploaded." });
+      if (!req.files || (!req.files.cover && !req.files.manuscript)) {
+        return res.status(400).send({ message: "No files uploaded." });
       }
-      
-      const fileName = req.file.originalname;
-      // Define a unique destination path in Firebase Storage
-      // Using Date.now() ensures a unique filename, preventing conflicts.
-      const destinationPath = `books/manuscripts/${Date.now()}_${fileName}`; // Example path
 
-      // Call the new Firebase Storage uploader function
-      const fileLink = await uploadFileToFirebase(req.file, destinationPath);
+      const uuid = decodeToken(token, process.env.JWT_SECRET);
+      const { title, description, genre, subgenre }  = req.body;
 
-      res.status(200).send({
-        message: "File uploaded successfully to Firebase Storage.",
-        link: fileLink,
+      let coverLink = null;
+      let manuscriptLink = null;
+
+      // Upload cover if present
+      if (req.files.cover && req.files.cover[0]) {
+        const coverFile = req.files.cover[0];
+        const coverPath = `books/covers/${coverFile.originalname}`;
+        coverLink = await uploadFileToFirebase(coverFile, coverPath);
+      }
+
+      // Upload manuscript if present
+      if (req.files.manuscript && req.files.manuscript[0]) {
+        const manuscriptFile = req.files.manuscript[0];
+        const manuscriptPath = `books/manuscripts/${manuscriptFile.originalname}`;
+        manuscriptLink = await uploadFileToFirebase(manuscriptFile, manuscriptPath);
+      }
+
+      const result = await client.query(
+      "INSERT INTO books (user_id, title, description, subgenre, genre, cover_image_url, manuscript_url, status, views) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *",
+      [uuid.userId, title, description, subgenre, genre, coverLink, manuscriptLink, 0, 0]
+    );
+
+      res.status(200).json({
+        message: "Book uploaded successfully"
       });
     } else {
       res.status(401).json({ error: "Unauthorized" });
@@ -38,4 +61,36 @@ export const fileuploader = async (req, res) => {
         error: error.message,
       });
     }
+}
+
+/**
+ * Get all books for the authenticated user.
+ * @param {Object} req - The request object (with req.userId from middleware).
+ * @param {Object} res - The response object.
+ */
+
+export const getBooksForUser = async (req, res) => {
+  const authHeader = req.header("authorization");
+  const token = authHeader && authHeader.split(" ")[1]; // Bearer <token>
+
+  try {
+    if (checkToken(token, process.env.JWT_SECRET)) {
+
+      const uuid = decodeToken(token, process.env.JWT_SECRET);
+      if (!uuid) {
+        return res.status(400).json({ error: "Invalid token" });
+      }
+      const result = await client.query(
+        "SELECT * FROM books WHERE user_id = $1",
+        [uuid.userId]
+      );
+
+      res.status(200).json({books: result.rows});
+    } else {
+      res.status(401).json({ error: "Unauthorized" });
+    }
+  } catch (error) {
+    console.error("Error fetching books for user:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
 }
