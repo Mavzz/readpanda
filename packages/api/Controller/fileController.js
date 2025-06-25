@@ -45,7 +45,7 @@ export const publishBook = async (req, res) => {
 
       const result = await client.query(
       "INSERT INTO books (user_id, title, description, subgenre, genre, cover_image_url, manuscript_url, status, views) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *",
-      [uuid.userId, title, description, subgenre, genre, coverLink, manuscriptLink, 0, 0]
+      [uuid.userId, title, description, subgenre, genre, coverLink, manuscriptLink, 1, 0]
     );
 
       res.status(200).json({
@@ -91,6 +91,31 @@ export const getBooksForUser = async (req, res) => {
     }
   } catch (error) {
     console.error("Error fetching books for user:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+}
+
+/**
+ * Get all books.
+ * @param {Object} req - The request object (with req.userId from middleware).
+ * @param {Object} res - The response object.
+ */
+
+export const getAllBooks = async (req, res) => {
+  const authHeader = req.header("authorization");
+  const token = authHeader && authHeader.split(" ")[1]; // Bearer <token>
+
+  try {
+    if (checkToken(token, process.env.JWT_SECRET)) {
+
+      const result = await client.query("SELECT * FROM books");
+
+      res.status(200).json({books: result.rows});
+    } else {
+      res.status(401).json({ error: "Unauthorized" });
+    }
+  } catch (error) {
+    console.error("Error fetching all books:", error);
     res.status(500).json({ error: "Internal server error" });
   }
 }

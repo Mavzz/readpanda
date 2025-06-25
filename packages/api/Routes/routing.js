@@ -1,7 +1,7 @@
 import express from 'express';
 import { createUser, loginUser, getUsers, googleAuth } from "../controller/users.js";
 import { getUserPreferences, updateUserPreferences, getGenres, getSubgenres } from "../controller/user_preferences.js";
-import { publishBook, getBooksForUser } from '../controller/fileController.js';
+import { publishBook, getBooksForUser, getAllBooks } from '../controller/fileController.js';
 import multer from 'multer';
 const upload = multer();
 
@@ -34,5 +34,7 @@ router.get("/subgenres", getSubgenres);
 
 // Route to get books for a user
 router.get("/books", getBooksForUser);
+
+router.get("/allbooks", getAllBooks);
 
 export default router;
