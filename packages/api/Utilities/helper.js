@@ -88,4 +88,35 @@ export const generateJWT = (uuid) =>{
   return jwttoken;
 }
 
-export { LOGIN_TYPES };
+const generateTokens = (userId) => {
+  const accessToken = jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '1h' });
+  const refreshToken = jwt.sign({ userId, type: 'refresh' }, process.env.JWT_REFRESH_SECRET, { expiresIn: '7d' });
+  return { accessToken, refreshToken };
+};
+
+const storeRefreshToken = async (userId, refreshToken) => {
+  try{
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+
+    const checkToken = await client.query(`
+      SELECT id FROM refresh_tokens 
+      WHERE user_id = $1 AND expires_at > NOW()`, 
+      [userId]);
+
+    if (checkToken.rows.length === 0) {
+      await client.query(
+        'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
+        [userId, refreshToken, expiresAt]
+      );
+    } else {
+      await client.query(
+        'UPDATE refresh_tokens SET token = $2, expires_at = $3 WHERE id = $1',
+        [checkToken.rows[0].id, refreshToken, expiresAt]
+      );
+    }
+  } catch (error) {
+    console.error("Error storing refresh token:", error);
+  }
+};
+
+export { LOGIN_TYPES, generateTokens, storeRefreshToken };

@@ -1,40 +1,44 @@
 import express from 'express';
-import { createUser, loginUser, getUsers, googleAuth } from "../controller/users.js";
+import multer from 'multer';
+import dotenv from 'dotenv';
+import { createUser, loginUser, getUsers, googleAuth, refreshAccessToken, logoutUser } from "../controller/users.js";
 import { getUserPreferences, updateUserPreferences, getGenres, getSubgenres } from "../controller/user_preferences.js";
 import { publishBook, getBooksForUser, getAllBooks } from '../controller/fileController.js';
-import multer from 'multer';
-const upload = multer();
+import { getUserNotifications, getUnreadNotificationCount } from "../Controller/notification.js"
 
+
+dotenv.config({path: './.env.local'});
+
+const upload = multer();
+const API_VERSION = process.env.API_VERSION || '/api/v1';
 const router = express.Router();
 
-// Route to get all users
-router.get('/users', getUsers);
+// User routes
+router.get(`${API_VERSION}/users`, getUsers); // Route to get all users
+router.post(`${API_VERSION}/signup`, createUser); // Route to create a new user
 
-// Route to create a new user
-router.post("/signup", createUser);
+router.get(`${API_VERSION}/token/refresh`, refreshAccessToken);
 
-// Route to login a user
-router.post("/auth/login", loginUser);
+// Authenticate user
+router.post(`${API_VERSION}/auth/login`, loginUser); // Route to login a user
+router.post(`${API_VERSION}/auth/google`, googleAuth); // Google authentication
+router.post(`${API_VERSION}/auth/logout`, logoutUser); // Logout user
 
-// Get user preferences
-router.get("/user/preferences", getUserPreferences);
+// User preferences
+router.get(`${API_VERSION}/user/preferences`, getUserPreferences); // Get user preferences
+router.post(`${API_VERSION}/user/preferences`, updateUserPreferences); // Update user preferences
 
-router.post("/user/preferences", updateUserPreferences);
+// Books
+router.post(`${API_VERSION}/books/upload`, upload.fields([{ name: 'cover', maxCount: 1 }, { name: 'manuscript', maxCount: 1 }]), publishBook); // Route to upload a file
+router.get(`${API_VERSION}/books`, getBooksForUser); // Route to get books for a user
+router.get(`${API_VERSION}/books/all`, getAllBooks); // Route to get all books
 
-router.post("/auth/google", googleAuth); // Placeholder for Google authentication, implement as needed
+// Genres / Subgenres
+router.get(`${API_VERSION}/genres`, getGenres); // Route to get genres
+router.get(`${API_VERSION}/subgenres`, getSubgenres); // Route to get subgenres
 
-// Route to upload a file
-router.post("/books/upload", upload.fields([{ name: 'cover', maxCount: 1 }, { name: 'manuscript', maxCount: 1 }]), publishBook);
-
-// New route to get genres
-router.get("/genres", getGenres);
-
-// New route to get subgenres
-router.get("/subgenres", getSubgenres);
-
-// Route to get books for a user
-router.get("/books", getBooksForUser);
-
-router.get("/allbooks", getAllBooks);
+// Notifications
+router.get(`${API_VERSION}/notifications`, getUserNotifications); // Route to get user notifications
+router.get(`${API_VERSION}/notifications/unread/count`, getUnreadNotificationCount); // Route to get user notifications count
 
 export default router;

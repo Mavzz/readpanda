@@ -14,6 +14,7 @@ export const getUserPreferences = async (req, res) => {
     const authHeader = req.header("authorization");
     const token = authHeader && authHeader.split(" ")[1]; // Bearer <token>
     const { username } = req.query;
+    const preferencesData = {};
 
     //console.log(token);
     console.log(username);
@@ -27,41 +28,8 @@ export const getUserPreferences = async (req, res) => {
       let userId;
       let preferences;
       if (user_preferenceCheck.rows.length === 0) {
-        userId = (
-          await client.query("SELECT uuid FROM users WHERE username = $1", [
-            username,
-          ])
-        ).rows[0].uuid;
 
-        // Insert user preferences and get the inserted preferences
-        const preferencesData = {}
-        
-        /*preferencesArray.push({
-            preference_id: preference.id,
-            preference_subgenre: preference.subgenre,
-            preference_genre: preference.genre,
-            preference_value: false,
-          });*/
-
-        for (const preference of (
-          await client.query("SELECT * FROM preferences order by id")
-        ).rows) {
-          if (!preferencesData[preference.genre]) {
-            preferencesData[preference.genre] = [];
-          }
-          preferencesData[preference.genre].push({
-            preference_id: preference.id,
-            preference_subgenre: preference.subgenre,
-            preference_value: false});
-        }
-
-        //console.log(preferencesArray);
-
-        preferences = await client.query(
-          "INSERT INTO user_preferences (user_id, preferences) VALUES ($1, $2)",
-          [userId, preferencesData]
-        );
-        res.status(201).json(preferencesData);
+        res.status(200).json({'message': 'No preferences found for the user. Please set your preferences.'});
         console.log("User preferences inserted successfully");
       } else {
         userId = user_preferenceCheck.rows[0].user_id;

@@ -1,6 +1,6 @@
 import express from 'express';
 import bodyParser from 'body-parser';
-import routes from './routes/routing.js';
+import routes from './Routes/routing.js';
 import dotenv from 'dotenv';
 import client from './database/config.js';
 import fs from 'fs';
@@ -34,6 +34,18 @@ client
   .then(() => console.log("Connected to PostgreSQL"))
   .catch((err) => console.error("Connection error", err.stack));
 
+/*app.use((req, res, next) => {
+  const authHeader = req.header("authorization");
+  const token = authHeader && authHeader.split(" ")[1];
+  if (token) {
+    console.log("Authorization token found");
+    next();
+  } else {
+    console.error("No authorization token found");
+    res.status(401).json({ error: "Unauthorized" });
+  }
+  
+});*/
 
 // Routes for API endpoints
 app.use("/", routes);

@@ -44,8 +44,8 @@ export const publishBook = async (req, res) => {
       }
 
       const result = await client.query(
-      "INSERT INTO books (user_id, title, description, subgenre, genre, cover_image_url, manuscript_url, status, views) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *",
-      [uuid.userId, title, description, subgenre, genre, coverLink, manuscriptLink, 1, 0]
+      "INSERT INTO books ( title, description, subgenre, genre, cover_image_url, manuscript_url, status, views) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *",
+      [title, description, subgenre, genre, coverLink, manuscriptLink, 1, 0]
     );
 
       res.status(200).json({
@@ -115,7 +115,11 @@ export const getAllBooks = async (req, res) => {
       res.status(401).json({ error: "Unauthorized" });
     }
   } catch (error) {
-    console.error("Error fetching all books:", error);
-    res.status(500).json({ error: "Internal server error" });
+    if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+      return res.status(498).json({ error: 'Invalid or expired token' });
+    } else {
+      console.error("Error fetching all books:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
   }
 }
