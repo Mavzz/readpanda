@@ -13,17 +13,20 @@ ReadPanda is a full-stack web application designed to create a "virtual book clu
 
 ReadPanda is built using a **monorepo architecture**, containing the backend and frontend codebases in a single repository. This simplifies dependency management and cross-application consistency. The architecture follows a classic **client-server model**.
 
-- **Backend (`api`):** A Node.js server that exposes a RESTful API. It handles business logic, user authentication, database interactions, and file storage.
+- **Backend:** Available in two implementations:
+  - **Node.js (`api`):** Original implementation - A Node.js server that exposes a RESTful API
+  - **Go (`api-go`):** New implementation - A Go server with identical API endpoints
 - **Frontend (`portal`):** A single-page application (SPA) built with React. It provides the user interface and consumes the API exposed by the backend.
 
 ### 2.1. Project Structure
 
-The repository is organized into two main packages:
+The repository is organized into three main packages:
 
 ```
 /
 ├── packages/
-│   ├── api/         # Backend Node.js/Express Application
+│   ├── api/         # Backend Node.js/Express Application (Original)
+│   ├── api-go/      # Backend Go Application (New)
 │   └── portal/      # Frontend React/Vite Application
 ├── .gitignore
 ├── package.json     # Root package file (likely for workspace management)
@@ -89,6 +92,75 @@ packages/api/
 
 ---
 
+## 3A. Go Backend Architecture (`packages/api-go`)
+
+The Go backend is a complete rewrite of the Node.js backend, offering improved performance, type safety, and built-in concurrency support. It provides identical API endpoints and functionality.
+
+- **Stack:**
+  - **Language:** Go 1.21+
+  - **Router:** Gorilla Mux
+  - **Database:** PostgreSQL (using `lib/pq` driver)
+  - **File Storage:** Firebase Cloud Storage
+  - **Authentication:** JSON Web Tokens (JWT) & Google OAuth
+- **Key Dependencies:**
+  - `github.com/gorilla/mux`: HTTP request router and dispatcher
+  - `github.com/lib/pq`: PostgreSQL driver
+  - `github.com/golang-jwt/jwt/v5`: JWT implementation
+  - `golang.org/x/crypto/bcrypt`: Password hashing
+  - `cloud.google.com/go/storage`: Google Cloud Storage client
+  - `google.golang.org/api/idtoken`: Google OAuth token validation
+  - `github.com/joho/godotenv`: Environment variable management
+
+### 3A.1. Directory Structure (`api-go`)
+
+```
+packages/api-go/
+├── cmd/
+│   └── server/
+│       └── main.go          # Application entry point
+├── internal/
+│   ├── config/
+│   │   └── config.go        # Configuration management
+│   ├── database/
+│   │   └── database.go      # PostgreSQL connection
+│   ├── handlers/
+│   │   ├── users.go         # User authentication handlers
+│   │   ├── books.go         # Book management handlers
+│   │   ├── preferences.go   # User preferences handlers
+│   │   └── notifications.go # Notification handlers
+│   ├── middleware/
+│   │   └── middleware.go    # HTTP middleware (CORS, logging)
+│   ├── models/
+│   │   └── models.go        # Data models and types
+│   └── utils/
+│       ├── utils.go         # Utility functions (JWT, crypto, bcrypt)
+│       └── firebase.go      # Firebase Storage integration
+├── go.mod                   # Go module definition
+├── go.sum                   # Dependency checksums
+└── README.md                # Go-specific documentation
+```
+
+### 3A.2. Key Differences from Node.js Implementation
+
+1. **Type Safety:** Go provides compile-time type checking, catching errors before runtime
+2. **Performance:** Generally 2-3x faster execution with lower memory footprint
+3. **Concurrency:** Built-in goroutines handle concurrent requests efficiently
+4. **Error Handling:** Explicit error handling (no try-catch blocks)
+5. **Single Binary:** Compiles to a single executable binary for easy deployment
+6. **No Runtime Dependencies:** Unlike Node.js, Go applications don't require a runtime installation
+
+### 3A.3. API Compatibility
+
+The Go backend maintains **100% API compatibility** with the Node.js version:
+- All endpoints have identical paths and methods
+- Request/response formats are the same
+- Authentication mechanisms are identical
+- Database schema is shared between both implementations
+
+This allows the frontend to work with either backend without modification.
+
+---
+
 ## 4. Frontend Architecture (`packages/portal`)
 
 The frontend is a modern, responsive Single-Page Application (SPA) built with React.
@@ -139,8 +211,16 @@ Follow these steps to set up and run the ReadPanda application locally.
 
 ### 5.1. Prerequisites
 
+**For Node.js Backend:**
 - Node.js (v18 or later recommended)
 - npm (or yarn)
+- PostgreSQL database
+- Firebase project with Storage enabled
+
+**For Go Backend:**
+- Go 1.21 or later
+- PostgreSQL database
+- Firebase project with Storage enabled
 
 ### 5.2. Installation
 
@@ -159,7 +239,9 @@ Follow these steps to set up and run the ReadPanda application locally.
 
 You need to run the backend and frontend in separate terminals.
 
-1.  **Run the Backend Server:**
+#### Option A: Using Node.js Backend
+
+1.  **Run the Node.js Backend Server:**
     ```bash
     cd packages/api
     npm start
@@ -172,6 +254,29 @@ You need to run the backend and frontend in separate terminals.
     npm run dev
     ```
     The React development server will start, and the application will be accessible in your browser, typically at `http://localhost:5173`.
+
+#### Option B: Using Go Backend
+
+1.  **Run the Go Backend Server:**
+    ```bash
+    cd packages/api-go
+    go run cmd/server/main.go
+    ```
+    Or build and run:
+    ```bash
+    go build -o api-go cmd/server/main.go
+    ./api-go
+    ```
+    The API server should now be running on `http://localhost:3000` (or HTTPS if certificates are present).
+
+2.  **Run the Frontend Portal:**
+    ```bash
+    cd packages/portal
+    npm run dev
+    ```
+    The React development server will start, and the application will be accessible in your browser, typically at `http://localhost:5173`.
+
+**Note:** You only need to run ONE backend at a time (either Node.js or Go). The frontend works identically with both.
 
 ---
 
