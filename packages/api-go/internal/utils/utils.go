@@ -159,7 +159,8 @@ func CheckToken(tokenString, secret string) bool {
 	return err == nil
 }
 
-// DecodeToken decodes a JWT token without full verification
+// DecodeToken decodes and verifies a JWT token
+// Note: This is an alias for VerifyToken kept for API compatibility
 func DecodeToken(tokenString, secret string) (*JWTClaims, error) {
 	return VerifyToken(tokenString, secret)
 }

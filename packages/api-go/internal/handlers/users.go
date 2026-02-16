@@ -112,8 +112,9 @@ func evpBytesToKey(password, salt []byte, keyLen, iterations int) []byte {
 
 func md5Hash(data []byte) []byte {
 	// For compatibility with CryptoJS, we need MD5
-	// Note: MD5 is not cryptographically secure, but CryptoJS uses it
-	// In production, consider using a more secure method
+	// WARNING: MD5 is NOT cryptographically secure and is only used here for
+	// compatibility with the existing frontend CryptoJS implementation.
+	// TODO: Migrate frontend to use PBKDF2, Argon2, or another secure KDF
 	hash := md5.Sum(data)
 	return hash[:]
 }
@@ -265,7 +266,11 @@ func (h *UserHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Store refresh token
-	tx, _ := database.DB.Begin()
+	tx, err := database.DB.Begin()
+	if err != nil {
+		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
 	defer tx.Rollback()
 	err = storeRefreshToken(tx, user.UUID, refreshToken)
 	if err != nil {
@@ -327,7 +332,11 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		tx, _ := database.DB.Begin()
+		tx, err := database.DB.Begin()
+		if err != nil {
+			http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
 		defer tx.Rollback()
 		storeRefreshToken(tx, user.UUID, refreshToken)
 		tx.Commit()
