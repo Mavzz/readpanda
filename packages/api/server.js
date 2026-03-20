@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import client from './database/config.js';
 import fs from 'fs';
 import http from 'http';
+import https from 'https';
 import { getLocalIp } from './utilities/helper.js';
 
 
@@ -50,17 +51,24 @@ client
 // Routes for API endpoints
 app.use("/", routes);
 
-// 🛡️ Read cert files
-const sslOptions = {
-  key: fs.readFileSync('key.pem'),
-  cert: fs.readFileSync('cert.pem'),
-};
-
 const localIp = "0.0.0.0"
-
-// Server listening on port 3000 for incoming requests
 const port = process.env.PORT || 3000;
 
-http.createServer(sslOptions, app).listen(port, localIp, () => {
-  console.log(`App running on ${localIp} HTTPS and port ${port}...`);
+// Start HTTP server (use a reverse proxy like nginx for HTTPS in production)
+http.createServer(app).listen(port, localIp, () => {
+  console.log(`App running on ${localIp} HTTP port ${port}...`);
 });
+
+// Optionally start HTTPS if cert files exist
+try {
+  const sslOptions = {
+    key: fs.readFileSync('key.pem'),
+    cert: fs.readFileSync('cert.pem'),
+  };
+  const httpsPort = process.env.HTTPS_PORT || 3443;
+  https.createServer(sslOptions, app).listen(httpsPort, localIp, () => {
+    console.log(`App running on ${localIp} HTTPS port ${httpsPort}...`);
+  });
+} catch {
+  console.log('No SSL certs found (key.pem/cert.pem) — HTTPS server not started');
+}

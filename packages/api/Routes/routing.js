@@ -17,7 +17,7 @@ const router = express.Router();
 router.get(`${API_VERSION}/users`, getUsers); // Route to get all users
 router.post(`${API_VERSION}/signup`, createUser); // Route to create a new user
 
-router.get(`${API_VERSION}/token/refresh`, refreshAccessToken);
+router.post(`${API_VERSION}/token/refresh`, refreshAccessToken);
 
 // Authenticate user
 router.post(`${API_VERSION}/auth/login`, loginUser); // Route to login a user

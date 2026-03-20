@@ -1,6 +1,5 @@
 import client from '../database/config.js';
 import { cryptPassword, decryptPassword, generateUserUid, LOGIN_TYPES, generateTokens, storeRefreshToken, checkToken } from '../utilities/helper.js';
-import CryptoJS from "crypto-js";
 import dotenv from 'dotenv';
 import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
@@ -45,12 +44,8 @@ export const createUser = async (req, res) => {
       return res.status(409).json({ error: "User already exists" });
     }
 
-    // Decrypt the password
-    const bytes = CryptoJS.AES.decrypt(password, process.env.CRYPTO_SECRET);
-    const decryptedPassword = bytes.toString(CryptoJS.enc.Utf8);
-
-    // Insert new user
-    const hashedPassword = cryptPassword(decryptedPassword);
+    // Hash the password (sent as plaintext over HTTPS)
+    const hashedPassword = cryptPassword(password);
 
     // Generate a unique user ID
     const newUserUid = generateUserUid();
@@ -91,10 +86,6 @@ export const loginUser = async (req, res) => {
   const { username, password } = req.body;
   try {
 
-    // Decrypt the password
-    const bytes = CryptoJS.AES.decrypt(password, process.env.CRYPTO_SECRET);
-    const decryptedPassword = bytes.toString(CryptoJS.enc.Utf8);
-
     // Check if user exists
     const userCheck = await client.query(
       "SELECT * FROM users WHERE username = $1",
@@ -107,8 +98,8 @@ export const loginUser = async (req, res) => {
 
     const user = userCheck.rows[0];
 
-    // Verify password
-    const isPasswordValid = decryptPassword(decryptedPassword, user.password);
+    // Verify password (sent as plaintext over HTTPS)
+    const isPasswordValid = decryptPassword(password, user.password);
 
     if (!isPasswordValid) {
       return res.status(401).json({ error: "Invalid username or password" });
@@ -152,7 +143,10 @@ export const googleAuth = async (req, res) => {
 
     const ticket = await OAuthclient.verifyIdTokenAsync({
       idToken: token,
-      audience: process.env.GOOGLE_CLIENT_ID, // This should match the client ID used on frontend
+      audience: [
+        process.env.GOOGLE_CLIENT_ID,         // Web client ID
+        process.env.GOOGLE_IOS_CLIENT_ID,     // iOS client ID
+      ],
     });
     const payload = ticket.getPayload();
     const { email, name, sub: id, picture } = payload; // sub is the unique identifier for the user
@@ -217,7 +211,8 @@ export const googleAuth = async (req, res) => {
 // New refresh token endpoint
 export const refreshAccessToken = async (req, res) => {
   try {
-    const { refreshToken } = req.body;
+    const authHeader = req.header('Authorization');
+    const refreshToken = authHeader && authHeader.split(' ')[1];
 
     if (!refreshToken) {
       return res.status(401).json({ error: 'Refresh token required' });
@@ -244,7 +239,7 @@ export const refreshAccessToken = async (req, res) => {
     const { accessToken } = generateTokens(decoded.userId);
 
     res.status(200).json({
-      "accessToken": accessToken,
+      token: accessToken,
     });
   } catch (err) {
     if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
