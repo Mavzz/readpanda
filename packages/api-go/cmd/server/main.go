@@ -24,9 +24,9 @@ func main() {
 	}
 	defer database.Close()
 
-	// Initialize Firebase
-	if err := utils.InitFirebase(cfg); err != nil {
-		log.Printf("Warning: Failed to initialize Firebase: %v", err)
+	// Initialize object storage (R2 / MinIO)
+	if err := utils.InitObjectStorage(cfg); err != nil {
+		log.Printf("Warning: Failed to initialize object storage: %v", err)
 	}
 
 	// Initialize handlers
@@ -63,7 +63,7 @@ func main() {
 	router.HandleFunc(apiPrefix+"/books/upload", bookHandler.PublishBook).Methods("POST")
 	router.HandleFunc(apiPrefix+"/books", bookHandler.GetBooksForUser).Methods("GET")
 	router.HandleFunc(apiPrefix+"/books/all", bookHandler.GetAllBooks).Methods("GET")
-	router.HandleFunc(apiPrefix+"/books/seed", bookHandler.SeedBooksFromFirebase).Methods("POST")
+	router.HandleFunc(apiPrefix+"/books/seed", bookHandler.SeedBooksFromStorage).Methods("POST")
 
 	// Genres / Subgenres routes
 	router.HandleFunc(apiPrefix+"/genres", preferencesHandler.GetGenres).Methods("GET")

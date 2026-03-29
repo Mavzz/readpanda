@@ -75,7 +75,7 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 		}
 
 		coverPath := fmt.Sprintf("books/covers/%s", coverHeader.Filename)
-		url, err := utils.UploadFileToFirebase(coverData, coverHeader.Header.Get("Content-Type"), coverPath)
+		url, err := utils.UploadFileToStorage(coverData, coverHeader.Header.Get("Content-Type"), coverPath)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to upload cover: `+err.Error()+`"}`, http.StatusInternalServerError)
 			return
@@ -94,7 +94,7 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 		}
 
 		manuscriptPath := fmt.Sprintf("books/manuscripts/%s", manuscriptHeader.Filename)
-		url, err := utils.UploadFileToFirebase(manuscriptData, manuscriptHeader.Header.Get("Content-Type"), manuscriptPath)
+		url, err := utils.UploadFileToStorage(manuscriptData, manuscriptHeader.Header.Get("Content-Type"), manuscriptPath)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to upload manuscript: `+err.Error()+`"}`, http.StatusInternalServerError)
 			return
@@ -223,16 +223,16 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// SeedBooksFromFirebase populates the books table from files in Firebase Storage
-func (h *BookHandler) SeedBooksFromFirebase(w http.ResponseWriter, r *http.Request) {
-	// List covers and manuscripts from Firebase Storage
-	covers, err := utils.ListFilesFromFirebase("books/covers/")
+// SeedBooksFromStorage populates the books table from files in object storage
+func (h *BookHandler) SeedBooksFromStorage(w http.ResponseWriter, r *http.Request) {
+	// List covers and manuscripts from object storage
+	covers, err := utils.ListFilesFromStorage("books/covers/")
 	if err != nil {
 		http.Error(w, `{"error": "Failed to list covers: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
 	}
 
-	manuscripts, err := utils.ListFilesFromFirebase("books/manuscripts/")
+	manuscripts, err := utils.ListFilesFromStorage("books/manuscripts/")
 	if err != nil {
 		http.Error(w, `{"error": "Failed to list manuscripts: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -271,7 +271,7 @@ func (h *BookHandler) SeedBooksFromFirebase(w http.ResponseWriter, r *http.Reque
 	}
 
 	response := map[string]interface{}{
-		"message":  fmt.Sprintf("Seeded %d books from Firebase Storage", inserted),
+		"message":  fmt.Sprintf("Seeded %d books from object storage", inserted),
 		"inserted": inserted,
 	}
 

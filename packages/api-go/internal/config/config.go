@@ -44,6 +44,13 @@ type Config struct {
 	FirebaseCertURL            string
 	FirebaseStorageBucket      string
 	FirebaseServiceAccountPath string
+
+	// Object storage (Cloudflare R2 / MinIO)
+	R2Endpoint        string
+	R2AccessKeyID     string
+	R2SecretAccessKey string
+	R2BucketName      string
+	R2PublicURL       string
 }
 
 // Load reads configuration from environment variables
@@ -82,6 +89,12 @@ func Load() *Config {
 		FirebaseCertURL:            getEnv("FIREBASE_CERT_URL", ""),
 		FirebaseStorageBucket:      getEnv("FIREBASE_STORAGE_BUCKET", ""),
 		FirebaseServiceAccountPath: getEnv("FIREBASE_SERVICE_ACCOUNT_PATH", ""),
+
+		R2Endpoint:        getEnv("R2_ENDPOINT", ""),
+		R2AccessKeyID:     getEnv("R2_ACCESS_KEY_ID", ""),
+		R2SecretAccessKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
+		R2BucketName:      getEnv("R2_BUCKET_NAME", ""),
+		R2PublicURL:       getEnv("R2_PUBLIC_URL", ""),
 	}
 }
 
