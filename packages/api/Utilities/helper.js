@@ -89,8 +89,8 @@ export const generateJWT = (uuid) =>{
 }
 
 const generateTokens = (userId) => {
-  const accessToken = jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '1h' });
-  const refreshToken = jwt.sign({ userId, type: 'refresh' }, process.env.JWT_REFRESH_SECRET, { expiresIn: '7d' });
+  const accessToken = jwt.sign({ userId }, 'readpandaSecretkey', { expiresIn: '1h' });
+  const refreshToken = jwt.sign({ userId, type: 'refresh' }, 'readpandaRefreshSecretkey', { expiresIn: '7d' });
   return { accessToken, refreshToken };
 };
 

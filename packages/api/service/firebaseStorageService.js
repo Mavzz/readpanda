@@ -1,4 +1,5 @@
 // packages/api/Service/firebaseStorageService.js
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
@@ -10,26 +11,93 @@ dotenv.config({path: './.env.local'});
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const serviceAccountPath = path.resolve(__dirname, '../firebase/credentials/serviceAccountKey.json');
+const defaultServiceAccountPath = path.resolve(__dirname, '../serviceAccountKey.json');
 
-try {
+const resolveServiceAccountPath = () => {
+  const configuredPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || process.env.GOOGLE_APPLICATION_CREDENTIALS;
 
-  // Initialize Firebase
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccountPath),
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET
-  });
-  console.log("Firebase Admin SDK initialized successfully.");
-  
-} catch (error) {
-  console.error("Firebase Admin SDK initialization failed:", error);
-  // It's crucial to handle this error properly in production
-  // e.g., exit the process or mark the service as unavailable
-}
+  if (!configuredPath) {
+    return defaultServiceAccountPath;
+  }
 
+  return path.isAbsolute(configuredPath)
+    ? configuredPath
+    : path.resolve(process.cwd(), configuredPath);
+};
 
-// Initialize Cloud Storage and get a reference to the service
-const bucket = admin.storage().bucket();
+let bucket;
+let firebaseInitError;
+let firebaseInitialized = false;
+
+const initializeFirebaseAdmin = () => {
+  if (firebaseInitialized || admin.apps.length > 0) {
+    firebaseInitialized = true;
+    return true;
+  }
+
+  try {
+    let credential;
+    const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+
+    if (serviceAccountJson) {
+      let parsedServiceAccount;
+
+      try {
+        parsedServiceAccount = JSON.parse(serviceAccountJson);
+      } catch {
+        throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON.');
+      }
+
+      credential = admin.credential.cert(parsedServiceAccount);
+    } else {
+      const serviceAccountPath = resolveServiceAccountPath();
+
+      if (!fs.existsSync(serviceAccountPath)) {
+        throw new Error(
+          `Service account file not found at '${serviceAccountPath}'. ` +
+          'Set FIREBASE_SERVICE_ACCOUNT_PATH, GOOGLE_APPLICATION_CREDENTIALS, or FIREBASE_SERVICE_ACCOUNT_JSON.'
+        );
+      }
+
+      credential = admin.credential.cert(serviceAccountPath);
+    }
+
+    admin.initializeApp({
+      credential,
+      storageBucket: process.env.FIREBASE_STORAGE_BUCKET
+    });
+
+    firebaseInitialized = true;
+    console.log('Firebase Admin SDK initialized successfully.');
+    return true;
+  } catch (error) {
+    firebaseInitError = error;
+    console.error('Firebase Admin SDK initialization failed:', error);
+    return false;
+  }
+};
+
+const getBucketOrThrow = () => {
+  const initialized = initializeFirebaseAdmin();
+
+  if (!initialized) {
+    throw new Error(
+      `Firebase Storage is unavailable. ${firebaseInitError?.message || 'Initialization failed.'}`
+    );
+  }
+
+  if (!bucket) {
+    const storageBucket = process.env.FIREBASE_STORAGE_BUCKET;
+
+    if (!storageBucket) {
+      throw new Error('FIREBASE_STORAGE_BUCKET is not set.');
+    }
+
+    bucket = admin.storage().bucket(storageBucket);
+  }
+
+  return bucket;
+};
 
 /**
  * Uploads a file buffer to Firebase Storage.
@@ -45,6 +113,8 @@ export const uploadFileToFirebase = async (file, destinationPath) => {
   if (!destinationPath) {
     throw new Error("No destination path provided for upload.");
   }
+
+  const bucket = getBucketOrThrow();
 
   const token = generateUserUid();
 
@@ -91,4 +161,45 @@ export const uploadFileToFirebase = async (file, destinationPath) => {
     stream.end(file.buffer);
   });
 
+};
+
+/**
+ * Generates a signed download URL for a file in Firebase Storage.
+ * @param {string} filePath - The path of the file in the bucket (e.g., 'books/covers/cover.jpg').
+ * @returns {Promise<string>} A signed URL valid for 1 hour.
+ */
+export const getFileDownloadUrl = async (filePath) => {
+  const bucket = getBucketOrThrow();
+  const file = bucket.file(filePath);
+
+  const [url] = await file.getSignedUrl({
+    action: 'read',
+    expires: Date.now() + 60 * 60 * 1000, // 1 hour
+  });
+
+  return url;
+};
+
+/**
+ * Lists all files under a given prefix in Firebase Storage.
+ * @param {string} prefix - The folder prefix (e.g., 'books/covers/').
+ * @returns {Promise<Array<{name: string, url: string}>>} Array of file objects with name and signed URL.
+ */
+export const listFilesInFolder = async (prefix) => {
+  const bucket = getBucketOrThrow();
+  const [files] = await bucket.getFiles({ prefix });
+
+  const results = await Promise.all(
+    files
+      .filter((file) => !file.name.endsWith('/')) // skip folder placeholders
+      .map(async (file) => {
+        const [url] = await file.getSignedUrl({
+          action: 'read',
+          expires: Date.now() + 60 * 60 * 1000,
+        });
+        return { name: file.name, url };
+      })
+  );
+
+  return results;
 };

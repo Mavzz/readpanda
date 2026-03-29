@@ -8,7 +8,10 @@
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "nodemon server.js"
+    "start": "nodemon server.js",
+    "db:setup": "PGHOST=${PG_HOST:-localhost} PGPORT=${PG_PORT:-5432} PGUSER=${PG_USER:-$USER} PGDATABASE=${PG_DB:-readpanda} psql -v ON_ERROR_STOP=1 -f Database/init.sql",
+    "db:seed": "PGHOST=${PG_HOST:-localhost} PGPORT=${PG_PORT:-5432} PGUSER=${PG_USER:-$USER} PGDATABASE=${PG_DB:-readpanda} psql -v ON_ERROR_STOP=1 -f Database/seed_preferences.sql",
+    "db:bootstrap": "npm run db:setup && npm run db:seed"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",

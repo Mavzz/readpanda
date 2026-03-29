@@ -3,7 +3,7 @@
 // import { GoogleDriveUploader } from '../Controller/GoogleDrive.js';
 
 // Import the new Firebase Storage service:
-import { uploadFileToFirebase } from '../service/firebaseStorageService.js';
+import { uploadFileToFirebase, getFileDownloadUrl } from '../service/firebaseStorageService.js';
 import { checkToken, decodeToken } from "../utilities/helper.js";
 import client from '../database/config.js';
 
@@ -44,7 +44,7 @@ export const publishBook = async (req, res) => {
       }
 
       const result = await client.query(
-      "INSERT INTO books ( title, description, subgenre, genre, cover_image_url, manuscript_url, status, views) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *",
+      "INSERT INTO books (title, description, subgenre, genre, cover_image_url, manuscript_url, status, views) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *",
       [title, description, subgenre, genre, coverLink, manuscriptLink, 1, 0]
     );
 
@@ -110,7 +110,26 @@ export const getAllBooks = async (req, res) => {
 
       const result = await client.query("SELECT * FROM books");
 
-      res.status(200).json({books: result.rows});
+      const booksWithCovers = await Promise.all(
+        result.rows.map(async (book) => {
+          if (book.cover_image_url) {
+            try {
+              // Extract the storage path from the stored URL
+              const urlObj = new URL(book.cover_image_url);
+              const encodedPath = urlObj.pathname.split('/o/')[1];
+              if (encodedPath) {
+                const storagePath = decodeURIComponent(encodedPath.split('?')[0]);
+                book.cover_image_url = await getFileDownloadUrl(storagePath);
+              }
+            } catch {
+              // Keep the original URL if signed URL generation fails
+            }
+          }
+          return book;
+        })
+      );
+
+      res.status(200).json({ books: booksWithCovers });
     } else {
       res.status(401).json({ error: "Unauthorized" });
     }
