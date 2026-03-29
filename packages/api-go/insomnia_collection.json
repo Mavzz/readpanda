@@ -1,0 +1,266 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-03-27T00:00:00.000Z",
+  "__export_source": "insomnia.desktop.app",
+  "resources": [
+    {
+      "_id": "wrk_readpanda",
+      "_type": "workspace",
+      "name": "ReadPanda API",
+      "description": "ReadPanda Go API collection",
+      "scope": "collection",
+      "parentId": null
+    },
+    {
+      "_id": "env_base",
+      "_type": "environment",
+      "name": "Local",
+      "parentId": "wrk_readpanda",
+      "data": {
+        "base_url": "http://localhost:3000/api/v1",
+        "access_token": "",
+        "refresh_token": ""
+      }
+    },
+    {
+      "_id": "fld_auth",
+      "_type": "request_group",
+      "name": "Auth",
+      "parentId": "wrk_readpanda"
+    },
+    {
+      "_id": "fld_users",
+      "_type": "request_group",
+      "name": "Users",
+      "parentId": "wrk_readpanda"
+    },
+    {
+      "_id": "fld_books",
+      "_type": "request_group",
+      "name": "Books",
+      "parentId": "wrk_readpanda"
+    },
+    {
+      "_id": "fld_preferences",
+      "_type": "request_group",
+      "name": "Preferences",
+      "parentId": "wrk_readpanda"
+    },
+    {
+      "_id": "fld_notifications",
+      "_type": "request_group",
+      "name": "Notifications",
+      "parentId": "wrk_readpanda"
+    },
+    {
+      "_id": "req_signup",
+      "_type": "request",
+      "name": "Signup",
+      "method": "POST",
+      "url": "{{ _.base_url }}/signup",
+      "parentId": "fld_auth",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"username\": \"testuser\",\n  \"password\": \"testpassword\",\n  \"email\": \"test@example.com\"\n}"
+      }
+    },
+    {
+      "_id": "req_login",
+      "_type": "request",
+      "name": "Login",
+      "method": "POST",
+      "url": "{{ _.base_url }}/auth/login",
+      "parentId": "fld_auth",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"username\": \"testuser\",\n  \"password\": \"testpassword\"\n}"
+      }
+    },
+    {
+      "_id": "req_google_auth",
+      "_type": "request",
+      "name": "Google Auth",
+      "method": "POST",
+      "url": "{{ _.base_url }}/auth/google",
+      "parentId": "fld_auth",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"idToken\": \"YOUR_GOOGLE_ID_TOKEN\"\n}"
+      }
+    },
+    {
+      "_id": "req_logout",
+      "_type": "request",
+      "name": "Logout",
+      "method": "POST",
+      "url": "{{ _.base_url }}/auth/logout",
+      "parentId": "fld_auth",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {}
+    },
+    {
+      "_id": "req_refresh_token",
+      "_type": "request",
+      "name": "Refresh Token",
+      "method": "GET",
+      "url": "{{ _.base_url }}/token/refresh",
+      "parentId": "fld_auth",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.refresh_token }}" }
+      ],
+      "body": {}
+    },
+    {
+      "_id": "req_get_users",
+      "_type": "request",
+      "name": "Get Users",
+      "method": "GET",
+      "url": "{{ _.base_url }}/users",
+      "parentId": "fld_users",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {}
+    },
+    {
+      "_id": "req_publish_book",
+      "_type": "request",
+      "name": "Publish Book",
+      "method": "POST",
+      "url": "{{ _.base_url }}/books/upload",
+      "parentId": "fld_books",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {
+        "mimeType": "multipart/form-data",
+        "params": [
+          { "name": "title", "value": "My Book Title", "type": "text" },
+          { "name": "description", "value": "A great book", "type": "text" },
+          { "name": "genre", "value": "Fiction", "type": "text" },
+          { "name": "subgenre", "value": "Fantasy", "type": "text" },
+          { "name": "cover", "value": "", "type": "file" },
+          { "name": "manuscript", "value": "", "type": "file" }
+        ]
+      }
+    },
+    {
+      "_id": "req_get_user_books",
+      "_type": "request",
+      "name": "Get My Books",
+      "method": "GET",
+      "url": "{{ _.base_url }}/books",
+      "parentId": "fld_books",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {}
+    },
+    {
+      "_id": "req_get_all_books",
+      "_type": "request",
+      "name": "Get All Books",
+      "method": "GET",
+      "url": "{{ _.base_url }}/books/all",
+      "parentId": "fld_books",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {}
+    },
+    {
+      "_id": "req_seed_books",
+      "_type": "request",
+      "name": "Seed Books from Firebase",
+      "method": "POST",
+      "url": "{{ _.base_url }}/books/seed",
+      "parentId": "fld_books",
+      "headers": [],
+      "body": {}
+    },
+    {
+      "_id": "req_get_preferences",
+      "_type": "request",
+      "name": "Get User Preferences",
+      "method": "GET",
+      "url": "{{ _.base_url }}/user/preferences",
+      "parentId": "fld_preferences",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {}
+    },
+    {
+      "_id": "req_update_preferences",
+      "_type": "request",
+      "name": "Update User Preferences",
+      "method": "POST",
+      "url": "{{ _.base_url }}/user/preferences",
+      "parentId": "fld_preferences",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"preferences\": {\n    \"genre\": \"Fiction\",\n    \"subgenre\": \"Fantasy\"\n  }\n}"
+      }
+    },
+    {
+      "_id": "req_get_genres",
+      "_type": "request",
+      "name": "Get Genres",
+      "method": "GET",
+      "url": "{{ _.base_url }}/genres",
+      "parentId": "fld_preferences",
+      "headers": [],
+      "body": {}
+    },
+    {
+      "_id": "req_get_subgenres",
+      "_type": "request",
+      "name": "Get Subgenres",
+      "method": "GET",
+      "url": "{{ _.base_url }}/subgenres",
+      "parentId": "fld_preferences",
+      "headers": [],
+      "body": {}
+    },
+    {
+      "_id": "req_get_notifications",
+      "_type": "request",
+      "name": "Get Notifications",
+      "method": "GET",
+      "url": "{{ _.base_url }}/notifications",
+      "parentId": "fld_notifications",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {}
+    },
+    {
+      "_id": "req_get_unread_count",
+      "_type": "request",
+      "name": "Get Unread Notification Count",
+      "method": "GET",
+      "url": "{{ _.base_url }}/notifications/unread/count",
+      "parentId": "fld_notifications",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {}
+    }
+  ]
+}

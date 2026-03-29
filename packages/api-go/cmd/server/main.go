@@ -63,6 +63,7 @@ func main() {
 	router.HandleFunc(apiPrefix+"/books/upload", bookHandler.PublishBook).Methods("POST")
 	router.HandleFunc(apiPrefix+"/books", bookHandler.GetBooksForUser).Methods("GET")
 	router.HandleFunc(apiPrefix+"/books/all", bookHandler.GetAllBooks).Methods("GET")
+	router.HandleFunc(apiPrefix+"/books/seed", bookHandler.SeedBooksFromFirebase).Methods("POST")
 
 	// Genres / Subgenres routes
 	router.HandleFunc(apiPrefix+"/genres", preferencesHandler.GetGenres).Methods("GET")

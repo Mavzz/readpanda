@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 
 	"cloud.google.com/go/storage"
 	"github.com/Mavzz/readpanda/api-go/internal/config"
@@ -24,33 +25,43 @@ var firebaseStorage *FirebaseStorage
 func InitFirebase(cfg *config.Config) error {
 	ctx := context.Background()
 
-	// Create Firebase credentials JSON
-	credJSON := fmt.Sprintf(`{
-		"type": "%s",
-		"project_id": "%s",
-		"private_key_id": "%s",
-		"private_key": %s,
-		"client_email": "%s",
-		"client_id": "%s",
-		"auth_uri": "%s",
-		"token_uri": "%s",
-		"auth_provider_x509_cert_url": "%s",
-		"client_x509_cert_url": "%s"
-	}`,
-		cfg.FirebaseType,
-		cfg.FirebaseProjectID,
-		cfg.FirebasePrivateKeyID,
-		cfg.FirebasePrivateKey,
-		cfg.FirebaseClientEmail,
-		cfg.FirebaseClientID,
-		cfg.FirebaseAuthURI,
-		cfg.FirebaseTokenURI,
-		cfg.FirebaseAuthProvider,
-		cfg.FirebaseCertURL,
-	)
+	var opt option.ClientOption
 
-	opt := option.WithCredentialsJSON([]byte(credJSON))
-	
+	// Prefer service account file if path is set
+	if cfg.FirebaseServiceAccountPath != "" {
+		if _, err := os.Stat(cfg.FirebaseServiceAccountPath); err != nil {
+			return fmt.Errorf("service account file not found: %w", err)
+		}
+		fmt.Printf("Using service account file: %s\n", cfg.FirebaseServiceAccountPath)
+		opt = option.WithCredentialsFile(cfg.FirebaseServiceAccountPath)
+	} else {
+		// Fall back to constructing credentials from individual env vars
+		credJSON := fmt.Sprintf(`{
+			"type": "%s",
+			"project_id": "%s",
+			"private_key_id": "%s",
+			"private_key": %s,
+			"client_email": "%s",
+			"client_id": "%s",
+			"auth_uri": "%s",
+			"token_uri": "%s",
+			"auth_provider_x509_cert_url": "%s",
+			"client_x509_cert_url": "%s"
+		}`,
+			cfg.FirebaseType,
+			cfg.FirebaseProjectID,
+			cfg.FirebasePrivateKeyID,
+			cfg.FirebasePrivateKey,
+			cfg.FirebaseClientEmail,
+			cfg.FirebaseClientID,
+			cfg.FirebaseAuthURI,
+			cfg.FirebaseTokenURI,
+			cfg.FirebaseAuthProvider,
+			cfg.FirebaseCertURL,
+		)
+		opt = option.WithCredentialsJSON([]byte(credJSON))
+	}
+
 	// Create storage client
 	client, err := storage.NewClient(ctx, opt)
 	if err != nil {
@@ -58,6 +69,7 @@ func InitFirebase(cfg *config.Config) error {
 	}
 
 	// Get bucket
+	fmt.Printf("Using Firebase Storage bucket: %s\n", cfg.FirebaseStorageBucket)
 	bucket := client.Bucket(cfg.FirebaseStorageBucket)
 	if bucket == nil {
 		return fmt.Errorf("failed to get storage bucket")
@@ -145,4 +157,45 @@ func ReadFileFromFirebase(filePath string) ([]byte, error) {
 	}
 
 	return data, nil
+}
+
+// FirebaseFileInfo holds metadata about a file in Firebase Storage
+type FirebaseFileInfo struct {
+	Name string
+	URL  string
+}
+
+// ListFilesFromFirebase lists all files under a given prefix in Firebase Storage
+func ListFilesFromFirebase(prefix string) ([]FirebaseFileInfo, error) {
+	if firebaseStorage == nil {
+		return nil, fmt.Errorf("Firebase storage not initialized")
+	}
+
+	var files []FirebaseFileInfo
+	it := firebaseStorage.bucket.Objects(firebaseStorage.ctx, &storage.Query{Prefix: prefix})
+	for {
+		attrs, err := it.Next()
+		if err != nil {
+			break
+		}
+		// Skip "directory" entries
+		if attrs.Name == "" || attrs.Name == prefix {
+			continue
+		}
+
+		// Build download URL using the download token if present
+		token := attrs.Metadata["firebaseStorageDownloadTokens"]
+		encodedPath := url.QueryEscape(attrs.Name)
+		fileURL := fmt.Sprintf(
+			"https://firebasestorage.googleapis.com/v0/b/%s/o/%s?alt=media&token=%s",
+			firebaseStorage.bucketName, encodedPath, token,
+		)
+
+		files = append(files, FirebaseFileInfo{
+			Name: attrs.Name,
+			URL:  fileURL,
+		})
+	}
+
+	return files, nil
 }

@@ -306,9 +306,12 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 
 	token := parts[1]
 
-	// Verify Google ID token
+	// Verify Google ID token against known client IDs (web and iOS)
 	ctx := context.Background()
 	payload, err := idtoken.Validate(ctx, token, h.Config.GoogleClientID)
+	if err != nil && h.Config.GoogleIOSClientID != "" {
+		payload, err = idtoken.Validate(ctx, token, h.Config.GoogleIOSClientID)
+	}
 	if err != nil {
 		http.Error(w, `{"error": "Invalid Google token"}`, http.StatusUnauthorized)
 		return
@@ -321,8 +324,8 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 
 	// Check if user exists
 	var user models.User
-	err = database.DB.QueryRow("SELECT id, username, uuid FROM users WHERE email = $1", email).
-		Scan(&user.ID, &user.Username, &user.UUID)
+	err = database.DB.QueryRow("SELECT email, username, uuid FROM users WHERE email = $1", email).
+		Scan(&user.Email, &user.Username, &user.UUID)
 
 	if err == nil {
 		// User exists, generate tokens

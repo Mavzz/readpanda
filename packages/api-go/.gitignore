@@ -29,3 +29,5 @@ server
 *.pem
 *.key
 *.crt
+
+serviceAccountKey.json

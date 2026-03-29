@@ -10,7 +10,7 @@ import (
 // Config holds all configuration for the application
 type Config struct {
 	// Server
-	Port   string
+	Port       string
 	APIVersion string
 
 	// Database
@@ -28,20 +28,22 @@ type Config struct {
 	CryptoSecret string
 
 	// Google OAuth
-	GoogleClientID string
+	GoogleClientID    string
+	GoogleIOSClientID string
 
 	// Firebase
-	FirebaseType          string
-	FirebaseProjectID     string
-	FirebasePrivateKeyID  string
-	FirebasePrivateKey    string
-	FirebaseClientEmail   string
-	FirebaseClientID      string
-	FirebaseAuthURI       string
-	FirebaseTokenURI      string
-	FirebaseAuthProvider  string
-	FirebaseCertURL       string
-	FirebaseStorageBucket string
+	FirebaseType               string
+	FirebaseProjectID          string
+	FirebasePrivateKeyID       string
+	FirebasePrivateKey         string
+	FirebaseClientEmail        string
+	FirebaseClientID           string
+	FirebaseAuthURI            string
+	FirebaseTokenURI           string
+	FirebaseAuthProvider       string
+	FirebaseCertURL            string
+	FirebaseStorageBucket      string
+	FirebaseServiceAccountPath string
 }
 
 // Load reads configuration from environment variables
@@ -65,19 +67,21 @@ func Load() *Config {
 		JWTRefreshSecret: getEnv("JWT_REFRESH_SECRET", ""),
 		CryptoSecret:     getEnv("CRYPTO_SECRET", ""),
 
-		GoogleClientID: getEnv("GOOGLE_CLIENT_ID", ""),
+		GoogleClientID:    getEnv("GOOGLE_CLIENT_ID", ""),
+		GoogleIOSClientID: getEnv("GOOGLE_IOS_CLIENT_ID", ""),
 
-		FirebaseType:          getEnv("FIREBASE_TYPE", "service_account"),
-		FirebaseProjectID:     getEnv("FIREBASE_PROJECT_ID", ""),
-		FirebasePrivateKeyID:  getEnv("FIREBASE_PRIVATE_KEY_ID", ""),
-		FirebasePrivateKey:    getEnv("FIREBASE_PRIVATE_KEY", ""),
-		FirebaseClientEmail:   getEnv("FIREBASE_CLIENT_EMAIL", ""),
-		FirebaseClientID:      getEnv("FIREBASE_CLIENT_ID", ""),
-		FirebaseAuthURI:       getEnv("FIREBASE_AUTH_URI", "https://accounts.google.com/o/oauth2/auth"),
-		FirebaseTokenURI:      getEnv("FIREBASE_TOKEN_URI", "https://oauth2.googleapis.com/token"),
-		FirebaseAuthProvider:  getEnv("FIREBASE_AUTH_PROVIDER", "https://www.googleapis.com/oauth2/v1/certs"),
-		FirebaseCertURL:       getEnv("FIREBASE_CERT_URL", ""),
-		FirebaseStorageBucket: getEnv("FIREBASE_STORAGE_BUCKET", ""),
+		FirebaseType:               getEnv("FIREBASE_TYPE", "service_account"),
+		FirebaseProjectID:          getEnv("FIREBASE_PROJECT_ID", ""),
+		FirebasePrivateKeyID:       getEnv("FIREBASE_PRIVATE_KEY_ID", ""),
+		FirebasePrivateKey:         getEnv("FIREBASE_PRIVATE_KEY", ""),
+		FirebaseClientEmail:        getEnv("FIREBASE_CLIENT_EMAIL", ""),
+		FirebaseClientID:           getEnv("FIREBASE_CLIENT_ID", ""),
+		FirebaseAuthURI:            getEnv("FIREBASE_AUTH_URI", "https://accounts.google.com/o/oauth2/auth"),
+		FirebaseTokenURI:           getEnv("FIREBASE_TOKEN_URI", "https://oauth2.googleapis.com/token"),
+		FirebaseAuthProvider:       getEnv("FIREBASE_AUTH_PROVIDER", "https://www.googleapis.com/oauth2/v1/certs"),
+		FirebaseCertURL:            getEnv("FIREBASE_CERT_URL", ""),
+		FirebaseStorageBucket:      getEnv("FIREBASE_STORAGE_BUCKET", ""),
+		FirebaseServiceAccountPath: getEnv("FIREBASE_SERVICE_ACCOUNT_PATH", ""),
 	}
 }
 

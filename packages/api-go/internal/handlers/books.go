@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"github.com/Mavzz/readpanda/api-go/internal/config"
@@ -196,7 +197,7 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := database.DB.Query("SELECT id, title, description, subgenre, genre, cover_image_url, manuscript_url, status, views, created_at FROM books")
+	rows, err := database.DB.Query("SELECT book_id, title, description, subgenre, genre, cover_image_url, manuscript_url, status, views, created_at FROM books")
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -216,6 +217,62 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 
 	response := map[string]interface{}{
 		"books": books,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// SeedBooksFromFirebase populates the books table from files in Firebase Storage
+func (h *BookHandler) SeedBooksFromFirebase(w http.ResponseWriter, r *http.Request) {
+	// List covers and manuscripts from Firebase Storage
+	covers, err := utils.ListFilesFromFirebase("books/covers/")
+	if err != nil {
+		http.Error(w, `{"error": "Failed to list covers: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+
+	manuscripts, err := utils.ListFilesFromFirebase("books/manuscripts/")
+	if err != nil {
+		http.Error(w, `{"error": "Failed to list manuscripts: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Index manuscripts by base filename (without extension) for matching
+	manuscriptMap := make(map[string]string)
+	for _, m := range manuscripts {
+		base := strings.TrimSuffix(filepath.Base(m.Name), filepath.Ext(m.Name))
+		manuscriptMap[base] = m.URL
+	}
+
+	inserted := 0
+	for _, cover := range covers {
+		filename := filepath.Base(cover.Name)
+		baseName := strings.TrimSuffix(filename, filepath.Ext(filename))
+
+		// Use the base filename as the book title
+		title := baseName
+
+		coverURL := cover.URL
+		var manuscriptURL *string
+		if mURL, ok := manuscriptMap[baseName]; ok {
+			manuscriptURL = &mURL
+		}
+
+		_, err := database.DB.Exec(
+			"INSERT INTO books (title, description, subgenre, genre, cover_image_url, manuscript_url, status, views) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+			title, "", "", "", &coverURL, manuscriptURL, 1, 0,
+		)
+		if err != nil {
+			http.Error(w, `{"error": "Failed to insert book: `+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+		inserted++
+	}
+
+	response := map[string]interface{}{
+		"message":  fmt.Sprintf("Seeded %d books from Firebase Storage", inserted),
+		"inserted": inserted,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
