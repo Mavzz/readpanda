@@ -1,21 +1,15 @@
 import React, { useState } from 'react';
-import { BookIcon, HomeIcon, UploadIcon, LogoutIcon, MenuIcon, SparklesIcon } from './components/icons';
+import { BookIcon, HomeIcon, UploadIcon, LogoutIcon, MenuIcon, SparklesIcon, FolderIcon } from './components/icons';
 import LoginPage from './pages/loginPage';
 import DashboardPage from './pages/dashboardPage';
 import MyBooksPage from './pages/myBooksPage';
 import UploadBookPage from './pages/uploadBookPage';
+import MyBucketsPage from './pages/myBucketsPage';
+import SignUpPage from './pages/signUpPage';
+import OurPicksPage from './pages/ourPicksPage';
 import { Routes, Route, Link, useNavigate } from 'react-router-dom'; // Import routing components
 
-// --- MOCK DATA ---
-// In a real application, this data would come from your API
-const mockAvatar = 'https://placehold.co/100x100/E2E8F0/4A5568?text=JD';
-
-const mockBooks = [
-  { id: 1, title: 'Echoes of the Void', status: 'Live', views: 10234, earnings: 450.20, cover: 'https://placehold.co/150x220/6366F1/FFFFFF?text=Echoes' },
-  { id: 2, title: 'The Last Cypher', status: 'Live', views: 8765, earnings: 320.50, cover: 'https://placehold.co/150x220/EC4899/FFFFFF?text=Cypher' },
-  { id: 3, title: 'Chronicles of the Sunstone', status: 'Draft', views: 0, earnings: 0, cover: 'https://placehold.co/150x220/F59E0B/FFFFFF?text=Chronicles' },
-  { id: 4, title: 'River of Whispers', status: 'Live', views: 15432, earnings: 680.90, cover: 'https://placehold.co/150x220/10B981/FFFFFF?text=River' },
-];
+const mockAvatar = 'https://placehold.co/100x100/E2E8F0/4A5568?text=AD';
 
 // --- Main App Layout & Routing ---
 const PortalLayout = ({ onLogout, children }) => {
@@ -45,11 +39,14 @@ const PortalLayout = ({ onLogout, children }) => {
       <div className={`fixed inset-y-0 left-0 z-30 w-64 bg-gray-800 text-white transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} transition-transform duration-300 ease-in-out md:relative md:translate-x-0 md:flex md:flex-col`}>
         <div className="flex items-center justify-center h-20 border-b border-gray-700">
           <span className="text-2xl font-bold">ReadPanda</span>
+          <span className="ml-2 text-xs font-semibold uppercase tracking-widest text-indigo-400 self-end mb-1">Admin</span>
         </div>
         <nav className="flex-1 px-4 py-6 space-y-2">
           {/* Use 'to' prop for React Router paths */}
           <NavLink to="/dashboard" icon={<HomeIcon />}>Dashboard</NavLink>
-          <NavLink to="/my-books" icon={<BookIcon />}>My Books</NavLink>
+          <NavLink to="/all-books" icon={<BookIcon />}>All Books</NavLink>
+          <NavLink to="/our-picks" icon={<SparklesIcon />}>Our Picks</NavLink>
+          <NavLink to="/my-buckets" icon={<FolderIcon />}>Buckets</NavLink>
           <NavLink to="/upload" icon={<UploadIcon />}>Upload Book</NavLink>
         </nav>
         <div className="px-4 py-4 border-t border-gray-700">
@@ -90,21 +87,24 @@ const PortalLayout = ({ onLogout, children }) => {
 // --- Main App Component ---
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const books = mockBooks; // Your mock books
+  const [showSignUp, setShowSignUp] = useState(false);
 
-  //const handleLogin = () => setIsLoggedIn(true);
   const handleLogout = () => setIsLoggedIn(false);
 
   if (!isLoggedIn) {
-    return <LoginPage setIsLoggedIn={setIsLoggedIn} />;
+    return showSignUp
+      ? <SignUpPage setIsLoggedIn={setIsLoggedIn} onSwitchToLogin={() => setShowSignUp(false)} />
+      : <LoginPage setIsLoggedIn={setIsLoggedIn} onSwitchToSignUp={() => setShowSignUp(true)} />;
   }
 
   return (
     <PortalLayout onLogout={handleLogout}>
       <Routes> {/* Define your routes here */}
-        <Route path="/" element={<DashboardPage bookLength={books.length} />} />
-        <Route path="/dashboard" element={<DashboardPage bookLength={books.length} />} />
-        <Route path="/my-books" element={<MyBooksPage mockBooks={books} />} />
+        <Route path="/" element={<DashboardPage />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/all-books" element={<MyBooksPage />} />
+        <Route path="/our-picks" element={<OurPicksPage />} />
+        <Route path="/my-buckets" element={<MyBucketsPage />} />
         <Route path="/upload" element={<UploadBookPage />} />
         {/* Add a catch-all route for 404 */}
         <Route path="*" element={<div>404 Not Found</div>} />

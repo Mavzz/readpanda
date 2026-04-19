@@ -6,22 +6,10 @@ const encryptedPassword = (password) => {
 };
 
 const getBackendUrl = async(path = "") => {
-
-  //const apiUrl = `https://${Constants.expoConfig.hostUri.split(':')[0]}:3000`;
-
-  let backendUrl;
-    try {
-      
-      const ip = import.meta.env.VITE_BACKEND_BASE_URL //"192.168.0.102" //await Network.getIpAddressAsync();
-      const port = 3000; // your backend port
-      backendUrl = `http://${ip}:${port}${path}`;
-
-    return backendUrl;
-
-  } catch {
-    console.warn("⚠️ Failed to get local IP, falling back to localhost");
-    return `http://localhost:3000${path}`;
-  }
+  const ip = import.meta.env.VITE_BACKEND_BASE_URL || 'localhost';
+  const port = import.meta.env.VITE_BACKEND_PORT || 3000;
+  const apiVersion = import.meta.env.VITE_API_VERSION || '/api/v1';
+  return `http://${ip}:${port}${apiVersion}${path}`;
 };
 
 const SignUpType = {

@@ -1,7 +1,7 @@
-export const usePost = async (url, body = {}, headers = {}, signal = null) => {
+export const usePut = async (url, body = {}, headers = {}, signal = null) => {
 
-  const response =  await fetch(url, {
-      method: "POST",
+  const response = await fetch(url, {
+      method: "PUT",
       headers: {
         "Content-Type": "application/json",
          "X-Application-Type": "portal",
@@ -16,6 +16,6 @@ export const usePost = async (url, body = {}, headers = {}, signal = null) => {
     throw new Error(`Request failed with status ${response.status}: ${errorText}`);
   }
 
-  return { status: response.status, response: await response.json()}
+  return { status: response.status, response: await response.json() }
 
 }

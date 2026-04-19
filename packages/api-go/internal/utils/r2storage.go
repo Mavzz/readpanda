@@ -85,15 +85,21 @@ func InitObjectStorage(cfg *appconfig.Config) error {
 
 // buildPublicURL constructs the public URL for an object key.
 func (o *ObjectStorage) buildPublicURL(key string) string {
-	base := strings.TrimRight(o.publicURL, "/")
-	if base == "" {
-		base = strings.TrimRight(o.endpoint, "/") + "/" + o.bucketName
-	}
-	// If base already ends with the bucket name, don't add it again.
-	if !strings.HasSuffix(base, "/"+o.bucketName) {
-		base = base + "/" + o.bucketName
-	}
-	return base + "/" + key
+       base := strings.TrimRight(o.publicURL, "/")
+       if base == "" {
+	       // S3 endpoint fallback
+	       base = strings.TrimRight(o.endpoint, "/") + "/" + o.bucketName
+	       return base + "/" + key
+       }
+       // If using r2.dev public URL, do NOT append bucket name
+       if strings.Contains(base, ".r2.dev") {
+	       return base + "/" + key
+       }
+       // For custom domains or other endpoints, preserve old logic
+       if !strings.HasSuffix(base, "/"+o.bucketName) {
+	       base = base + "/" + o.bucketName
+       }
+       return base + "/" + key
 }
 
 // UploadFileToStorage uploads raw bytes to R2 / MinIO and returns the public URL.

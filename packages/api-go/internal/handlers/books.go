@@ -223,7 +223,33 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// SeedBooksFromStorage populates the books table from files in object storage
+// parseCoverPath extracts genre, subgenre, and title from a cover object key.
+// Expected format: books/covers/{genre}/{subgenre}/{title}.ext
+func parseCoverPath(key string) (genre, subgenre, title string) {
+	// Remove the "books/covers/" prefix
+	trimmed := strings.TrimPrefix(key, "books/covers/")
+	parts := strings.Split(trimmed, "/")
+
+	switch len(parts) {
+	case 3:
+		// genre/subgenre/title.ext
+		genre = parts[0]
+		subgenre = parts[1]
+		title = strings.TrimSuffix(parts[2], filepath.Ext(parts[2]))
+	case 2:
+		// genre/title.ext (no subgenre)
+		genre = parts[0]
+		title = strings.TrimSuffix(parts[1], filepath.Ext(parts[1]))
+	default:
+		// title.ext only (flat structure)
+		title = strings.TrimSuffix(filepath.Base(key), filepath.Ext(key))
+	}
+	return
+}
+
+// SeedBooksFromStorage populates the books table from files in object storage.
+// Covers should be organised as: books/covers/{genre}/{subgenre}/{title}.ext
+// Manuscripts should mirror the same structure under books/manuscripts/.
 func (h *BookHandler) SeedBooksFromStorage(w http.ResponseWriter, r *http.Request) {
 	// List covers and manuscripts from object storage
 	covers, err := utils.ListFilesFromStorage("books/covers/")
@@ -238,30 +264,32 @@ func (h *BookHandler) SeedBooksFromStorage(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Index manuscripts by base filename (without extension) for matching
+	// Index manuscripts by relative path (without extension) for matching.
+	// e.g. "Fiction/Fantasy/The Great Adventure" → URL
 	manuscriptMap := make(map[string]string)
 	for _, m := range manuscripts {
-		base := strings.TrimSuffix(filepath.Base(m.Name), filepath.Ext(m.Name))
+		trimmed := strings.TrimPrefix(m.Name, "books/manuscripts/")
+		base := strings.TrimSuffix(trimmed, filepath.Ext(trimmed))
 		manuscriptMap[base] = m.URL
 	}
 
 	inserted := 0
 	for _, cover := range covers {
-		filename := filepath.Base(cover.Name)
-		baseName := strings.TrimSuffix(filename, filepath.Ext(filename))
-
-		// Use the base filename as the book title
-		title := baseName
+		genre, subgenre, title := parseCoverPath(cover.Name)
 
 		coverURL := cover.URL
 		var manuscriptURL *string
-		if mURL, ok := manuscriptMap[baseName]; ok {
+
+		// Build the manuscript lookup key to match cover's relative path
+		trimmed := strings.TrimPrefix(cover.Name, "books/covers/")
+		lookupKey := strings.TrimSuffix(trimmed, filepath.Ext(trimmed))
+		if mURL, ok := manuscriptMap[lookupKey]; ok {
 			manuscriptURL = &mURL
 		}
 
 		_, err := database.DB.Exec(
 			"INSERT INTO books (title, description, subgenre, genre, cover_image_url, manuscript_url, status, views) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-			title, "", "", "", &coverURL, manuscriptURL, 1, 0,
+			title, "", subgenre, genre, &coverURL, manuscriptURL, 1, 0,
 		)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to insert book: `+err.Error()+`"}`, http.StatusInternalServerError)

@@ -1,7 +1,7 @@
 {
   "_type": "export",
   "__export_format": 4,
-  "__export_date": "2026-03-27T00:00:00.000Z",
+  "__export_date": "2026-04-18T00:00:00.000Z",
   "__export_source": "insomnia.desktop.app",
   "resources": [
     {
@@ -20,7 +20,8 @@
       "data": {
         "base_url": "http://localhost:3000/api/v1",
         "access_token": "",
-        "refresh_token": ""
+        "refresh_token": "",
+        "username": ""
       }
     },
     {
@@ -51,6 +52,18 @@
       "_id": "fld_notifications",
       "_type": "request_group",
       "name": "Notifications",
+      "parentId": "wrk_readpanda"
+    },
+    {
+      "_id": "fld_buckets",
+      "_type": "request_group",
+      "name": "User Buckets",
+      "parentId": "wrk_readpanda"
+    },
+    {
+      "_id": "fld_our_picks",
+      "_type": "request_group",
+      "name": "Our Picks (Curated)",
       "parentId": "wrk_readpanda"
     },
     {
@@ -91,22 +104,19 @@
       "url": "{{ _.base_url }}/auth/google",
       "parentId": "fld_auth",
       "headers": [
-        { "name": "Content-Type", "value": "application/json" }
+        { "name": "Authorization", "value": "Bearer YOUR_GOOGLE_ID_TOKEN" }
       ],
-      "body": {
-        "mimeType": "application/json",
-        "text": "{\n  \"idToken\": \"YOUR_GOOGLE_ID_TOKEN\"\n}"
-      }
+      "body": {}
     },
     {
       "_id": "req_logout",
       "_type": "request",
       "name": "Logout",
       "method": "POST",
-      "url": "{{ _.base_url }}/auth/logout",
+      "url": "{{ _.base_url }}/auth/logout?username={{ _.username }}",
       "parentId": "fld_auth",
       "headers": [
-        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+        { "name": "Authorization", "value": "Bearer {{ _.refresh_token }}" }
       ],
       "body": {}
     },
@@ -114,13 +124,16 @@
       "_id": "req_refresh_token",
       "_type": "request",
       "name": "Refresh Token",
-      "method": "GET",
+      "method": "POST",
       "url": "{{ _.base_url }}/token/refresh",
       "parentId": "fld_auth",
       "headers": [
-        { "name": "Authorization", "value": "Bearer {{ _.refresh_token }}" }
+        { "name": "Content-Type", "value": "application/json" }
       ],
-      "body": {}
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"refreshToken\": \"{{ _.refresh_token }}\"\n}"
+      }
     },
     {
       "_id": "req_get_users",
@@ -129,9 +142,7 @@
       "method": "GET",
       "url": "{{ _.base_url }}/users",
       "parentId": "fld_users",
-      "headers": [
-        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
-      ],
+      "headers": [],
       "body": {}
     },
     {
@@ -183,11 +194,13 @@
     {
       "_id": "req_seed_books",
       "_type": "request",
-      "name": "Seed Books from Firebase",
+      "name": "Seed Books from Storage",
       "method": "POST",
       "url": "{{ _.base_url }}/books/seed",
       "parentId": "fld_books",
-      "headers": [],
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
       "body": {}
     },
     {
@@ -195,7 +208,7 @@
       "_type": "request",
       "name": "Get User Preferences",
       "method": "GET",
-      "url": "{{ _.base_url }}/user/preferences",
+      "url": "{{ _.base_url }}/user/preferences?username={{ _.username }}",
       "parentId": "fld_preferences",
       "headers": [
         { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
@@ -207,7 +220,7 @@
       "_type": "request",
       "name": "Update User Preferences",
       "method": "POST",
-      "url": "{{ _.base_url }}/user/preferences",
+      "url": "{{ _.base_url }}/user/preferences?username={{ _.username }}",
       "parentId": "fld_preferences",
       "headers": [
         { "name": "Content-Type", "value": "application/json" },
@@ -225,7 +238,9 @@
       "method": "GET",
       "url": "{{ _.base_url }}/genres",
       "parentId": "fld_preferences",
-      "headers": [],
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
       "body": {}
     },
     {
@@ -235,7 +250,9 @@
       "method": "GET",
       "url": "{{ _.base_url }}/subgenres",
       "parentId": "fld_preferences",
-      "headers": [],
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
       "body": {}
     },
     {
@@ -243,7 +260,7 @@
       "_type": "request",
       "name": "Get Notifications",
       "method": "GET",
-      "url": "{{ _.base_url }}/notifications",
+      "url": "{{ _.base_url }}/notifications?username={{ _.username }}",
       "parentId": "fld_notifications",
       "headers": [
         { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
@@ -255,8 +272,188 @@
       "_type": "request",
       "name": "Get Unread Notification Count",
       "method": "GET",
-      "url": "{{ _.base_url }}/notifications/unread/count",
+      "url": "{{ _.base_url }}/notifications/unread/count?username={{ _.username }}",
       "parentId": "fld_notifications",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {}
+    },
+    {
+      "_id": "req_list_user_buckets",
+      "_type": "request",
+      "name": "List My Buckets",
+      "method": "GET",
+      "url": "{{ _.base_url }}/users/me/buckets",
+      "parentId": "fld_buckets",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {}
+    },
+    {
+      "_id": "req_create_user_bucket",
+      "_type": "request",
+      "name": "Create Bucket",
+      "method": "POST",
+      "url": "{{ _.base_url }}/users/me/buckets",
+      "parentId": "fld_buckets",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"name\": \"My Reading List\",\n  \"book_ids\": []\n}"
+      }
+    },
+    {
+      "_id": "req_update_user_bucket",
+      "_type": "request",
+      "name": "Rename Bucket",
+      "method": "PUT",
+      "url": "{{ _.base_url }}/users/me/buckets/BUCKET_ID",
+      "parentId": "fld_buckets",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"name\": \"Updated Bucket Name\"\n}"
+      }
+    },
+    {
+      "_id": "req_delete_user_bucket",
+      "_type": "request",
+      "name": "Delete Bucket",
+      "method": "DELETE",
+      "url": "{{ _.base_url }}/users/me/buckets/BUCKET_ID",
+      "parentId": "fld_buckets",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {}
+    },
+    {
+      "_id": "req_add_books_to_bucket",
+      "_type": "request",
+      "name": "Add Books to Bucket",
+      "method": "POST",
+      "url": "{{ _.base_url }}/users/me/buckets/BUCKET_ID/books",
+      "parentId": "fld_buckets",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"book_ids\": [1, 2, 3]\n}"
+      }
+    },
+    {
+      "_id": "req_remove_book_from_bucket",
+      "_type": "request",
+      "name": "Remove Book from Bucket",
+      "method": "DELETE",
+      "url": "{{ _.base_url }}/users/me/buckets/BUCKET_ID/books/BOOK_ID",
+      "parentId": "fld_buckets",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {}
+    },
+    {
+      "_id": "req_get_our_picks",
+      "_type": "request",
+      "name": "Get Our Picks",
+      "method": "GET",
+      "url": "{{ _.base_url }}/home/our-picks",
+      "parentId": "fld_our_picks",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {}
+    },
+    {
+      "_id": "req_create_curated_bucket",
+      "_type": "request",
+      "name": "Create Curated Bucket",
+      "method": "POST",
+      "url": "{{ _.base_url }}/home/our-picks",
+      "parentId": "fld_our_picks",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"title\": \"Staff Picks\",\n  \"sort_order\": 0,\n  \"book_ids\": []\n}"
+      }
+    },
+    {
+      "_id": "req_update_curated_bucket",
+      "_type": "request",
+      "name": "Update Curated Bucket",
+      "method": "PUT",
+      "url": "{{ _.base_url }}/home/our-picks/BUCKET_ID",
+      "parentId": "fld_our_picks",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"title\": \"Updated Title\",\n  \"sort_order\": 1,\n  \"is_active\": true\n}"
+      }
+    },
+    {
+      "_id": "req_delete_curated_bucket",
+      "_type": "request",
+      "name": "Delete Curated Bucket",
+      "method": "DELETE",
+      "url": "{{ _.base_url }}/home/our-picks/BUCKET_ID",
+      "parentId": "fld_our_picks",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {}
+    },
+    {
+      "_id": "req_get_curated_bucket_books",
+      "_type": "request",
+      "name": "Get Curated Bucket Books",
+      "method": "GET",
+      "url": "{{ _.base_url }}/home/our-picks/BUCKET_ID/books",
+      "parentId": "fld_our_picks",
+      "headers": [
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {}
+    },
+    {
+      "_id": "req_add_books_to_curated_bucket",
+      "_type": "request",
+      "name": "Add Books to Curated Bucket",
+      "method": "POST",
+      "url": "{{ _.base_url }}/home/our-picks/BUCKET_ID/books",
+      "parentId": "fld_our_picks",
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
+      ],
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"book_ids\": [1, 2, 3]\n}"
+      }
+    },
+    {
+      "_id": "req_remove_book_from_curated_bucket",
+      "_type": "request",
+      "name": "Remove Book from Curated Bucket",
+      "method": "DELETE",
+      "url": "{{ _.base_url }}/home/our-picks/BUCKET_ID/books/BOOK_ID",
+      "parentId": "fld_our_picks",
       "headers": [
         { "name": "Authorization", "value": "Bearer {{ _.access_token }}" }
       ],

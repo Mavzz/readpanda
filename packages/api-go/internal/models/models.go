@@ -26,17 +26,17 @@ type UserPreferences struct {
 
 // Book represents a book in the system
 type Book struct {
-	ID              int       `json:"id"`
-	Title           string    `json:"title"`
-	Description     string    `json:"description"`
-	Subgenre        string    `json:"subgenre"`
-	Genre           string    `json:"genre"`
-	CoverImageURL   *string   `json:"cover_image_url,omitempty"`
-	ManuscriptURL   *string   `json:"manuscript_url,omitempty"`
-	Status          int       `json:"status"`
-	Views           int       `json:"views"`
-	UserID          *string   `json:"user_id,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID            int       `json:"id"`
+	Title         string    `json:"title"`
+	Description   string    `json:"description"`
+	Subgenre      string    `json:"subgenre"`
+	Genre         string    `json:"genre"`
+	CoverImageURL *string   `json:"cover_image_url,omitempty"`
+	ManuscriptURL *string   `json:"manuscript_url,omitempty"`
+	Status        int       `json:"status"`
+	Views         int       `json:"views"`
+	UserID        *string   `json:"user_id,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // RefreshToken represents a stored refresh token
@@ -62,6 +62,53 @@ type Preference struct {
 	ID       int    `json:"id"`
 	Genre    string `json:"genre"`
 	Subgenre string `json:"subgenre"`
+}
+
+// CuratedBucket represents an editorially curated collection
+type CuratedBucket struct {
+	ID            string        `json:"id"`
+	Title         string        `json:"title"`
+	SortOrder     int           `json:"sort_order"`
+	IsActive      bool          `json:"is_active"`
+	CoverImageURL *string       `json:"cover_image_url"`
+	BookCount     int           `json:"book_count"`
+	BooksPreview  []BookPreview `json:"books_preview"`
+}
+
+// BookPreview is a minimal book representation for bucket previews
+type BookPreview struct {
+	BookID        int     `json:"book_id"`
+	Title         string  `json:"title"`
+	AuthorName    string  `json:"author_name,omitempty"`
+	CoverImageURL *string `json:"cover_image_url,omitempty"`
+}
+
+// CuratedBucketDetail is the full response for a single curated bucket
+type CuratedBucketDetail struct {
+	ID    string             `json:"id"`
+	Title string             `json:"title"`
+	Books []CuratedBookEntry `json:"books"`
+}
+
+// CuratedBookEntry is a book within a curated bucket (full detail)
+type CuratedBookEntry struct {
+	BookID        int     `json:"book_id"`
+	Title         string  `json:"title"`
+	AuthorName    string  `json:"author_name,omitempty"`
+	CoverImageURL *string `json:"cover_image_url,omitempty"`
+	Genre         string  `json:"genre"`
+	Rating        float64 `json:"rating"`
+}
+
+// UserBucket represents a user-created collection
+type UserBucket struct {
+	ID           string        `json:"id"`
+	UserID       string        `json:"-"`
+	Name         string        `json:"name"`
+	BookCount    int           `json:"book_count,omitempty"`
+	BookIDs      []int         `json:"book_ids,omitempty"`
+	BooksPreview []BookPreview `json:"books_preview,omitempty"`
+	CreatedAt    time.Time     `json:"created_at"`
 }
 
 // LoginType constants
