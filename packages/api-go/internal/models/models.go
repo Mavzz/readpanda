@@ -26,7 +26,7 @@ type UserPreferences struct {
 
 // Book represents a book in the system
 type Book struct {
-	ID            int       `json:"id"`
+	ID            string    `json:"id"`
 	Title         string    `json:"title"`
 	Description   string    `json:"description"`
 	Subgenre      string    `json:"subgenre"`
@@ -77,10 +77,11 @@ type CuratedBucket struct {
 
 // BookPreview is a minimal book representation for bucket previews
 type BookPreview struct {
-	BookID        int     `json:"book_id"`
+	BookID        string  `json:"book_id"`
 	Title         string  `json:"title"`
 	AuthorName    string  `json:"author_name,omitempty"`
 	CoverImageURL *string `json:"cover_image_url,omitempty"`
+	ManuscriptURL *string `json:"manuscript_url,omitempty"`
 }
 
 // CuratedBucketDetail is the full response for a single curated bucket
@@ -92,7 +93,7 @@ type CuratedBucketDetail struct {
 
 // CuratedBookEntry is a book within a curated bucket (full detail)
 type CuratedBookEntry struct {
-	BookID        int     `json:"book_id"`
+	BookID        string  `json:"book_id"`
 	Title         string  `json:"title"`
 	AuthorName    string  `json:"author_name,omitempty"`
 	CoverImageURL *string `json:"cover_image_url,omitempty"`
@@ -106,7 +107,6 @@ type UserBucket struct {
 	UserID       string        `json:"-"`
 	Name         string        `json:"name"`
 	BookCount    int           `json:"book_count,omitempty"`
-	BookIDs      []int         `json:"book_ids,omitempty"`
 	BooksPreview []BookPreview `json:"books_preview,omitempty"`
 	CreatedAt    time.Time     `json:"created_at"`
 }

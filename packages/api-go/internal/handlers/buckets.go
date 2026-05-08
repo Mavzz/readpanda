@@ -120,8 +120,8 @@ func (h *BucketHandler) CreateUserBucket(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req struct {
-		Name    string `json:"name"`
-		BookIDs []int  `json:"book_ids"`
+		Name    string   `json:"name"`
+		BookIDs []string `json:"book_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
@@ -149,10 +149,11 @@ func (h *BucketHandler) CreateUserBucket(w http.ResponseWriter, r *http.Request)
 
 	bucketID := "ub_" + uuid.New().String()[:8]
 	now := time.Now().UTC()
+	bookCount := len(req.BookIDs)
 
 	_, err := database.DB.Exec(
-		`INSERT INTO user_buckets (id, user_id, name, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)`,
-		bucketID, userID, name, now, now,
+		`INSERT INTO user_buckets (id, user_id, name, created_at, updated_at, book_count) VALUES ($1, $2, $3, $4, $5, $6)`,
+		bucketID, userID, name, now, now, bookCount,
 	)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to create bucket"}`, http.StatusInternalServerError)
@@ -168,19 +169,31 @@ func (h *BucketHandler) CreateUserBucket(w http.ResponseWriter, r *http.Request)
 		)
 	}
 
-	var bookCount int
-	_ = database.DB.QueryRow(
-		`SELECT COUNT(*) FROM user_bucket_books WHERE bucket_id = $1`, bucketID,
-	).Scan(&bookCount)
+	bucket := models.UserBucket{
+		ID:        bucketID,
+		Name:      name,
+		BookCount: bookCount,
+	}
+	rows, err := database.DB.Query(
+		`SELECT ubb.book_id, b.title, b.cover_image_url, b.manuscript_url
+		FROM user_bucket_books ubb
+		JOIN books b ON b.book_id = ubb.book_id
+		WHERE ubb.bucket_id = $1`, bucketID,
+	)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var book models.BookPreview
+			if err := rows.Scan(&book.BookID, &book.Title, &book.CoverImageURL, &book.ManuscriptURL); err == nil {
+				bucket.BooksPreview = append(bucket.BooksPreview, book)
+			}
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":         bucketID,
-		"name":       name,
-		"book_ids":   req.BookIDs,
-		"book_count": bookCount,
-		"created_at": now.Format(time.RFC3339),
+		"bucket": bucket,
 	})
 }
 
@@ -275,7 +288,7 @@ func (h *BucketHandler) AddBooksToBucket(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req struct {
-		BookIDs []int `json:"book_ids"`
+		BookIDs []string `json:"book_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
@@ -345,6 +358,7 @@ func (h *BucketHandler) RemoveBookFromBucket(w http.ResponseWriter, r *http.Requ
 func (h *BucketHandler) GetOurPicks(w http.ResponseWriter, r *http.Request) {
 	_, ok := h.extractUserID(w, r)
 	if !ok {
+		http.Error(w, `{"error": "Unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
 
@@ -354,13 +368,13 @@ func (h *BucketHandler) GetOurPicks(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if isAdmin {
 		rows, err = database.DB.Query(
-			`SELECT id, title, sort_order, cover_image_url, is_active
+			`SELECT id, title, sort_order, cover_image_url, is_active, book_count
 			 FROM curated_buckets
 			 ORDER BY sort_order`,
 		)
 	} else {
 		rows, err = database.DB.Query(
-			`SELECT id, title, sort_order, cover_image_url, is_active
+			`SELECT id, title, sort_order, cover_image_url, is_active, book_count
 			 FROM curated_buckets
 			 WHERE is_active = true
 			 ORDER BY sort_order`,
@@ -375,7 +389,7 @@ func (h *BucketHandler) GetOurPicks(w http.ResponseWriter, r *http.Request) {
 	buckets := []models.CuratedBucket{}
 	for rows.Next() {
 		var b models.CuratedBucket
-		if err := rows.Scan(&b.ID, &b.Title, &b.SortOrder, &b.CoverImageURL, &b.IsActive); err != nil {
+		if err := rows.Scan(&b.ID, &b.Title, &b.SortOrder, &b.CoverImageURL, &b.IsActive, &b.BookCount); err != nil {
 			http.Error(w, `{"error": "Failed to scan bucket"}`, http.StatusInternalServerError)
 			return
 		}
@@ -383,26 +397,21 @@ func (h *BucketHandler) GetOurPicks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for i := range buckets {
-		// Book count
-		_ = database.DB.QueryRow(
-			`SELECT COUNT(*) FROM curated_bucket_books WHERE bucket_id = $1`, buckets[i].ID,
-		).Scan(&buckets[i].BookCount)
 
 		// Preview (first 2 books)
 		previewRows, err := database.DB.Query(
-			`SELECT b.book_id, b.title, b.cover_image_url
+			`SELECT b.book_id, b.title, b.cover_image_url, b.manuscript_url
 			 FROM curated_bucket_books cbb
 			 JOIN books b ON b.book_id = cbb.book_id
 			 WHERE cbb.bucket_id = $1
-			 ORDER BY cbb.sort_order
-			 LIMIT 2`,
+			 ORDER BY cbb.sort_order`,
 			buckets[i].ID,
 		)
 		if err == nil {
 			defer previewRows.Close()
 			for previewRows.Next() {
 				var bp models.BookPreview
-				if err := previewRows.Scan(&bp.BookID, &bp.Title, &bp.CoverImageURL); err == nil {
+				if err := previewRows.Scan(&bp.BookID, &bp.Title, &bp.CoverImageURL, &bp.ManuscriptURL); err == nil {
 					buckets[i].BooksPreview = append(buckets[i].BooksPreview, bp)
 				}
 			}
@@ -550,9 +559,9 @@ func (h *BucketHandler) AdminCreateCuratedBucket(w http.ResponseWriter, r *http.
 	}
 
 	var req struct {
-		Title     string `json:"title"`
-		SortOrder int    `json:"sort_order"`
-		BookIDs   []int  `json:"book_ids"`
+		Title     string   `json:"title"`
+		SortOrder int      `json:"sort_order"`
+		BookIDs   []string `json:"book_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
@@ -693,7 +702,7 @@ func (h *BucketHandler) AdminAddBooksToCuratedBucket(w http.ResponseWriter, r *h
 	}
 
 	var req struct {
-		BookIDs []int `json:"book_ids"`
+		BookIDs []string `json:"book_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)

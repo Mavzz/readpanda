@@ -12,6 +12,7 @@ import (
 	"github.com/Mavzz/readpanda/api-go/internal/database"
 	"github.com/Mavzz/readpanda/api-go/internal/models"
 	"github.com/Mavzz/readpanda/api-go/internal/utils"
+	"github.com/google/uuid"
 )
 
 // BookHandler handles book-related operations
@@ -107,10 +108,11 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	bookID := "bk_" + uuid.New().String()[:8]
 	// Insert book into database
 	_, err = database.DB.Exec(
-		"INSERT INTO books (title, description, subgenre, genre, cover_image_url, manuscript_url, status, views, user_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-		title, description, subgenre, genre, coverLink, manuscriptLink, 1, 0, claims.UserID,
+		"INSERT INTO books (book_id, title, description, subgenre, genre, cover_image_url, manuscript_url, status, views, user_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+		bookID, title, description, subgenre, genre, coverLink, manuscriptLink, 1, 0, claims.UserID,
 	)
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
@@ -151,7 +153,7 @@ func (h *BookHandler) GetBooksForUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := database.DB.Query("SELECT id, title, description, subgenre, genre, cover_image_url, manuscript_url, status, views, created_at FROM books WHERE user_id = $1", claims.UserID)
+	rows, err := database.DB.Query("SELECT book_id, title, description, subgenre, genre, cover_image_url, manuscript_url, status, views, created_at FROM books WHERE user_id = $1", claims.UserID)
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -287,9 +289,10 @@ func (h *BookHandler) SeedBooksFromStorage(w http.ResponseWriter, r *http.Reques
 			manuscriptURL = &mURL
 		}
 
+		bookID := "bk_" + uuid.New().String()[:8]
 		_, err := database.DB.Exec(
-			"INSERT INTO books (title, description, subgenre, genre, cover_image_url, manuscript_url, status, views) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-			title, "", subgenre, genre, &coverURL, manuscriptURL, 1, 0,
+			"INSERT INTO books (book_id, title, description, subgenre, genre, cover_image_url, manuscript_url, status, views) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+			bookID, title, "", subgenre, genre, &coverURL, manuscriptURL, 1, 0,
 		)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to insert book: `+err.Error()+`"}`, http.StatusInternalServerError)

@@ -1,0 +1,25 @@
+-- Migration script: Alter books table to use VARCHAR(50) for book_id (format: bk_ + 8 char uuid)
+-- CAUTION: If you have foreign keys already pointing to book_id, you must drop them before running this,
+-- then re-add them after altering their types as well.
+
+-- 1. If you just want to drop and recreate the table (easiest for early dev):
+-- DROP TABLE IF EXISTS books CASCADE;
+-- CREATE TABLE books (
+--     book_id VARCHAR(50) PRIMARY KEY DEFAULT,
+--     title VARCHAR(255) NOT NULL,
+--     description TEXT,
+--     subgenre VARCHAR(100),
+--     genre VARCHAR(100),
+--     cover_image_url TEXT,
+--     manuscript_url TEXT,
+--     status INT DEFAULT 1,
+--     views INT DEFAULT 0,
+--     user_id UUID REFERENCES users(uuid),
+--     created_at TIMESTAMP DEFAULT NOW()
+-- );
+
+-- 2. If you want to migrate existing data (converting INT to the new string format):
+-- ALTER TABLE books ALTER COLUMN book_id DROP DEFAULT;
+-- ALTER TABLE books ALTER COLUMN book_id SET DATA TYPE VARCHAR(50) USING ('bk_' || substr(md5(book_id::text), 1, 8));
+-- -- Optional: Set a default generator for future manual inserts (though Go handles it)
+-- ALTER TABLE books ALTER COLUMN book_id SET DEFAULT ('bk_' || substr(md5(random()::text), 1, 8));

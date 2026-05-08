@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS curated_buckets (
 
 CREATE TABLE IF NOT EXISTS curated_bucket_books (
     bucket_id VARCHAR(50) REFERENCES curated_buckets(id) ON DELETE CASCADE,
-    book_id INT REFERENCES books(book_id),
+    book_id VARCHAR(50) REFERENCES books(book_id),
     sort_order INT DEFAULT 0,
     added_at TIMESTAMP DEFAULT NOW(),
     PRIMARY KEY (bucket_id, book_id)
@@ -39,7 +39,7 @@ CREATE INDEX IF NOT EXISTS idx_user_buckets_user_id ON user_buckets(user_id);
 
 CREATE TABLE IF NOT EXISTS user_bucket_books (
     bucket_id VARCHAR(50) REFERENCES user_buckets(id) ON DELETE CASCADE,
-    book_id INT REFERENCES books(book_id),
+    book_id VARCHAR(50) REFERENCES books(book_id),
     added_at TIMESTAMP DEFAULT NOW(),
     PRIMARY KEY (bucket_id, book_id)
 );

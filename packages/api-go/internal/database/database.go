@@ -18,6 +18,8 @@ func Connect(cfg *config.Config) error {
 		cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName,
 	)
 
+	log.Printf("Connecting to database with connection string: %s", connStr) // Debug log
+
 	var err error
 	DB, err = sql.Open("postgres", connStr)
 	if err != nil {
