@@ -1,9 +1,5 @@
 // packages/api/Controller/fileController.js
-// Remove this import as it's no longer used for Firebase Storage:
-// import { GoogleDriveUploader } from '../Controller/GoogleDrive.js';
-
-// Import the new Firebase Storage service:
-import { uploadFileToFirebase, getFileDownloadUrl } from '../service/firebaseStorageService.js';
+import { uploadFileToStorage } from '../service/r2StorageService.js';
 import { checkToken, decodeToken } from "../utilities/helper.js";
 import client from '../database/config.js';
 
@@ -33,14 +29,14 @@ export const publishBook = async (req, res) => {
       if (req.files.cover && req.files.cover[0]) {
         const coverFile = req.files.cover[0];
         const coverPath = `books/covers/${coverFile.originalname}`;
-        coverLink = await uploadFileToFirebase(coverFile, coverPath);
+        coverLink = await uploadFileToStorage(coverFile, coverPath);
       }
 
       // Upload manuscript if present
       if (req.files.manuscript && req.files.manuscript[0]) {
         const manuscriptFile = req.files.manuscript[0];
         const manuscriptPath = `books/manuscripts/${manuscriptFile.originalname}`;
-        manuscriptLink = await uploadFileToFirebase(manuscriptFile, manuscriptPath);
+        manuscriptLink = await uploadFileToStorage(manuscriptFile, manuscriptPath);
       }
 
       const result = await client.query(
@@ -55,9 +51,9 @@ export const publishBook = async (req, res) => {
       res.status(401).json({ error: "Unauthorized" });
     }
   } catch (error) {
-      console.error("Error uploading file to Firebase Storage:", error);
+      console.error("Error uploading file to storage:", error);
       res.status(500).send({
-        message: "Failed to upload file to Firebase Storage.",
+        message: "Failed to upload file to storage.",
         error: error.message,
       });
     }
@@ -110,26 +106,7 @@ export const getAllBooks = async (req, res) => {
 
       const result = await client.query("SELECT * FROM books");
 
-      const booksWithCovers = await Promise.all(
-        result.rows.map(async (book) => {
-          if (book.cover_image_url) {
-            try {
-              // Extract the storage path from the stored URL
-              const urlObj = new URL(book.cover_image_url);
-              const encodedPath = urlObj.pathname.split('/o/')[1];
-              if (encodedPath) {
-                const storagePath = decodeURIComponent(encodedPath.split('?')[0]);
-                book.cover_image_url = await getFileDownloadUrl(storagePath);
-              }
-            } catch {
-              // Keep the original URL if signed URL generation fails
-            }
-          }
-          return book;
-        })
-      );
-
-      res.status(200).json({ books: booksWithCovers });
+      res.status(200).json({ books: result.rows });
     } else {
       res.status(401).json({ error: "Unauthorized" });
     }

@@ -5,9 +5,9 @@ import { getBackendUrl, encryptedPassword } from "../utils/Helper";
 import { GoogleLogin } from "@react-oauth/google"; // Import GoogleLogin component
 import { useNavigate } from 'react-router-dom'; // Import useNavigate
 
-const LoginPage = ({ setIsLoggedIn }) => {
+const LoginPage = ({ setIsLoggedIn, onSwitchToSignUp }) => {
   const [loading, setLoading] = useState(false);
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(""); // State for error messages
   const navigate = useNavigate(); // Hook for programmatic navigation
@@ -19,9 +19,9 @@ const LoginPage = ({ setIsLoggedIn }) => {
     // Clear previous errors
     setError("");
 
-    if (!email || !password) {
-      setError("Please enter both email and password.");
-      console.warn("Login attempt with empty email or password");
+    if (!username || !password) {
+      setError("Please enter both username and password.");
+      console.warn("Login attempt with empty username or password");
       return;
     }
 
@@ -43,7 +43,7 @@ const LoginPage = ({ setIsLoggedIn }) => {
       const { status, response } = await UsePOST(
         await getBackendUrl("/auth/login"),
         {
-          email,
+          username,
           password: encryptedPassword(password),
         },
         {}, // Headers can be passed if needed
@@ -52,9 +52,8 @@ const LoginPage = ({ setIsLoggedIn }) => {
 
       clearTimeout(timeoutId); // Clear the timeout if request completes before timeout
 
-      if (status === 200 && response.token) {
-        // Changed assignment to comparison
-        localStorage.setItem("token", response.token);
+      if (status === 200 && response.accessToken) {
+        localStorage.setItem("token", response.accessToken);
         localStorage.setItem("username", response.username);
         setIsLoggedIn(true);
         console.log("Login successful with email:", email);
@@ -101,7 +100,7 @@ const LoginPage = ({ setIsLoggedIn }) => {
         // 201 for new user, 200 for existing
 
         const headers = {
-                Authorization: `Bearer ${response.token}`
+                Authorization: `Bearer ${response.accessToken}`
               };
 
         const { response: genreResponse } = await UseGET(
@@ -117,7 +116,7 @@ const LoginPage = ({ setIsLoggedIn }) => {
         );
         
         console.log("Subgenres:", subgenreResponse);
-        localStorage.setItem("token", response.token);
+        localStorage.setItem("token", response.accessToken);
         localStorage.setItem("username", response.username);
         localStorage.setItem("avatar", response.picture || ""); // Handle avatar if available
         localStorage.setItem("genres", JSON.stringify(genreResponse.genre));
@@ -154,10 +153,10 @@ const LoginPage = ({ setIsLoggedIn }) => {
             ReadPanda
           </h1>
           <h2 className="mt-2 text-center text-2xl font-bold text-indigo-600">
-            Writer's Portal
+            Admin Portal
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600">
-            Sign in to your account
+            Sign in with your admin account
           </p>
         </div>
         <form className="mt-8 space-y-6">
@@ -175,19 +174,19 @@ const LoginPage = ({ setIsLoggedIn }) => {
           )}
           <div className="rounded-md shadow-sm -space-y-px">
             <div>
-              <label htmlFor="email-address" className="sr-only">
-                Email address
+              <label htmlFor="username" className="sr-only">
+                Username
               </label>
               <input
-                id="email-address"
-                name="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                type="email"
-                autoComplete="email"
+                id="username"
+                name="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                type="text"
+                autoComplete="username"
                 required
                 className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                placeholder="Email address"
+                placeholder="Username"
               />
             </div>
             <div>
@@ -264,12 +263,23 @@ const LoginPage = ({ setIsLoggedIn }) => {
           <GoogleLogin
               onSuccess={handleGoogleSuccess}
               onError={handleGoogleFailure}
-              theme="filled_blue" // or 'outline'
-              size="large" // or 'medium', 'small'
+              theme="filled_blue"
+              size="large"
               text-align="center"
-              width="360px" // Adjust width as needed
-              disabled={loading} // Disable Google button too when any login is in progress
+              width="360px"
+              disabled={loading}
             />
+
+          <p className="text-center text-sm text-gray-600">
+            Don&apos;t have an account?{" "}
+            <button
+              type="button"
+              onClick={onSwitchToSignUp}
+              className="font-medium text-indigo-600 hover:text-indigo-500"
+            >
+              Sign up
+            </button>
+          </p>
         </form>
       </div>
     </div>

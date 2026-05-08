@@ -12,6 +12,7 @@ import (
 	"github.com/Mavzz/readpanda/api-go/internal/database"
 	"github.com/Mavzz/readpanda/api-go/internal/models"
 	"github.com/Mavzz/readpanda/api-go/internal/utils"
+	"github.com/google/uuid"
 )
 
 // BookHandler handles book-related operations
@@ -75,7 +76,7 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 		}
 
 		coverPath := fmt.Sprintf("books/covers/%s", coverHeader.Filename)
-		url, err := utils.UploadFileToFirebase(coverData, coverHeader.Header.Get("Content-Type"), coverPath)
+		url, err := utils.UploadFileToStorage(coverData, coverHeader.Header.Get("Content-Type"), coverPath)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to upload cover: `+err.Error()+`"}`, http.StatusInternalServerError)
 			return
@@ -94,7 +95,7 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 		}
 
 		manuscriptPath := fmt.Sprintf("books/manuscripts/%s", manuscriptHeader.Filename)
-		url, err := utils.UploadFileToFirebase(manuscriptData, manuscriptHeader.Header.Get("Content-Type"), manuscriptPath)
+		url, err := utils.UploadFileToStorage(manuscriptData, manuscriptHeader.Header.Get("Content-Type"), manuscriptPath)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to upload manuscript: `+err.Error()+`"}`, http.StatusInternalServerError)
 			return
@@ -107,10 +108,11 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	bookID := "bk_" + uuid.New().String()[:8]
 	// Insert book into database
 	_, err = database.DB.Exec(
-		"INSERT INTO books (title, description, subgenre, genre, cover_image_url, manuscript_url, status, views, user_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
-		title, description, subgenre, genre, coverLink, manuscriptLink, 1, 0, claims.UserID,
+		"INSERT INTO books (book_id, title, description, subgenre, genre, cover_image_url, manuscript_url, status, views, user_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+		bookID, title, description, subgenre, genre, coverLink, manuscriptLink, 1, 0, claims.UserID,
 	)
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
@@ -151,7 +153,7 @@ func (h *BookHandler) GetBooksForUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := database.DB.Query("SELECT id, title, description, subgenre, genre, cover_image_url, manuscript_url, status, views, created_at FROM books WHERE user_id = $1", claims.UserID)
+	rows, err := database.DB.Query("SELECT book_id, title, description, subgenre, genre, cover_image_url, manuscript_url, status, views, created_at FROM books WHERE user_id = $1", claims.UserID)
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -223,45 +225,74 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// SeedBooksFromFirebase populates the books table from files in Firebase Storage
-func (h *BookHandler) SeedBooksFromFirebase(w http.ResponseWriter, r *http.Request) {
-	// List covers and manuscripts from Firebase Storage
-	covers, err := utils.ListFilesFromFirebase("books/covers/")
+// parseCoverPath extracts genre, subgenre, and title from a cover object key.
+// Expected format: books/covers/{genre}/{subgenre}/{title}.ext
+func parseCoverPath(key string) (genre, subgenre, title string) {
+	// Remove the "books/covers/" prefix
+	trimmed := strings.TrimPrefix(key, "books/covers/")
+	parts := strings.Split(trimmed, "/")
+
+	switch len(parts) {
+	case 3:
+		// genre/subgenre/title.ext
+		genre = parts[0]
+		subgenre = parts[1]
+		title = strings.TrimSuffix(parts[2], filepath.Ext(parts[2]))
+	case 2:
+		// genre/title.ext (no subgenre)
+		genre = parts[0]
+		title = strings.TrimSuffix(parts[1], filepath.Ext(parts[1]))
+	default:
+		// title.ext only (flat structure)
+		title = strings.TrimSuffix(filepath.Base(key), filepath.Ext(key))
+	}
+	return
+}
+
+// SeedBooksFromStorage populates the books table from files in object storage.
+// Covers should be organised as: books/covers/{genre}/{subgenre}/{title}.ext
+// Manuscripts should mirror the same structure under books/manuscripts/.
+func (h *BookHandler) SeedBooksFromStorage(w http.ResponseWriter, r *http.Request) {
+	// List covers and manuscripts from object storage
+	covers, err := utils.ListFilesFromStorage("books/covers/")
 	if err != nil {
 		http.Error(w, `{"error": "Failed to list covers: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
 	}
 
-	manuscripts, err := utils.ListFilesFromFirebase("books/manuscripts/")
+	manuscripts, err := utils.ListFilesFromStorage("books/manuscripts/")
 	if err != nil {
 		http.Error(w, `{"error": "Failed to list manuscripts: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// Index manuscripts by base filename (without extension) for matching
+	// Index manuscripts by relative path (without extension) for matching.
+	// e.g. "Fiction/Fantasy/The Great Adventure" → URL
 	manuscriptMap := make(map[string]string)
 	for _, m := range manuscripts {
-		base := strings.TrimSuffix(filepath.Base(m.Name), filepath.Ext(m.Name))
+		trimmed := strings.TrimPrefix(m.Name, "books/manuscripts/")
+		base := strings.TrimSuffix(trimmed, filepath.Ext(trimmed))
 		manuscriptMap[base] = m.URL
 	}
 
 	inserted := 0
 	for _, cover := range covers {
-		filename := filepath.Base(cover.Name)
-		baseName := strings.TrimSuffix(filename, filepath.Ext(filename))
-
-		// Use the base filename as the book title
-		title := baseName
+		genre, subgenre, title := parseCoverPath(cover.Name)
 
 		coverURL := cover.URL
 		var manuscriptURL *string
-		if mURL, ok := manuscriptMap[baseName]; ok {
+
+		// Build the manuscript lookup key to match cover's relative path
+		trimmed := strings.TrimPrefix(cover.Name, "books/covers/")
+		lookupKey := strings.TrimSuffix(trimmed, filepath.Ext(trimmed))
+		if mURL, ok := manuscriptMap[lookupKey]; ok {
 			manuscriptURL = &mURL
 		}
 
+		bookID := "bk_" + uuid.New().String()[:8]
 		_, err := database.DB.Exec(
-			"INSERT INTO books (title, description, subgenre, genre, cover_image_url, manuscript_url, status, views) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-			title, "", "", "", &coverURL, manuscriptURL, 1, 0,
+			"INSERT INTO books (book_id, title, description, subgenre, genre, cover_image_url, manuscript_url, status, views) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+			bookID, title, "", subgenre, genre, &coverURL, manuscriptURL, 1, 0,
 		)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to insert book: `+err.Error()+`"}`, http.StatusInternalServerError)
@@ -271,7 +302,7 @@ func (h *BookHandler) SeedBooksFromFirebase(w http.ResponseWriter, r *http.Reque
 	}
 
 	response := map[string]interface{}{
-		"message":  fmt.Sprintf("Seeded %d books from Firebase Storage", inserted),
+		"message":  fmt.Sprintf("Seeded %d books from object storage", inserted),
 		"inserted": inserted,
 	}
 

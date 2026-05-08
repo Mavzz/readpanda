@@ -4,6 +4,7 @@ export const useGet = async (url, headers = {}, signal = null) => {
       method: "GET",
       headers: {
         "Accept": "application/json",
+         "X-Application-Type": "portal",
         ...headers,
       },
       signal: signal,

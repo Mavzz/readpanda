@@ -179,9 +179,9 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	// Insert new user
 	var user models.User
 	err = tx.QueryRow(
-		"INSERT INTO users (username, password, email, isactive, login_type, uuid) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, username, email",
+		"INSERT INTO users (username, password, email, isactive, login_type, uuid) VALUES ($1, $2, $3, $4, $5, $6) RETURNING uuid, username, email",
 		req.Username, hashedPassword, req.Email, true, models.LoginTypeEmail, newUserUID,
-	).Scan(&user.ID, &user.Username, &user.Email)
+	).Scan(&user.UUID, &user.Username, &user.Email)
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -244,9 +244,9 @@ func (h *UserHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 	// Check if user exists
 	var user models.User
 	err = database.DB.QueryRow(
-		"SELECT id, username, email, password, uuid FROM users WHERE username = $1",
+		"SELECT uuid, username, email, password, uuid FROM users WHERE username = $1",
 		req.Username,
-	).Scan(&user.ID, &user.Username, &user.Email, &user.Password, &user.UUID)
+	).Scan(&user.UUID, &user.Username, &user.Email, &user.Password, &user.UUID)
 	if err != nil {
 		http.Error(w, `{"error": "Invalid username or password"}`, http.StatusUnauthorized)
 		return
