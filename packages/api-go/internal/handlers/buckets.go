@@ -347,6 +347,13 @@ func (h *BucketHandler) RemoveBookFromBucket(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Update book_count
+	var bookCount int
+	_ = database.DB.QueryRow(
+		`UPDATE user_buckets SET book_count = book_count - 1 WHERE id = $1`,
+		bucketID,
+	).Scan(&bookCount)
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
