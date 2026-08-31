@@ -111,6 +111,56 @@ type UserBucket struct {
 	CreatedAt    time.Time     `json:"created_at"`
 }
 
+// Room represents a reading room
+type Room struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	IsPrivate   bool      `json:"is_private"`
+	InviteCode  *string   `json:"invite_code,omitempty"`
+	AdminID     string    `json:"admin_id"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// RoomBook represents a book in a reading room
+type RoomBook struct {
+	ID        string    `json:"id"`
+	RoomID    string    `json:"room_id"`
+	BookID    string    `json:"book_id"`
+	AddedAt   time.Time `json:"added_at"`
+	AddedByID string    `json:"added_by_id"`
+}
+
+// RoomMember represents a member of a reading room
+type RoomMember struct {
+	ID        string    `json:"id"`
+	RoomID    string    `json:"room_id"`
+	UserID    string    `json:"user_id"`
+	InvitedAt time.Time `json:"invited_at"`
+	JoinedAt  time.Time `json:"joined_at"`
+}
+
+// RoomComment represents a comment in a reading room
+type RoomComment struct {
+	ID        string    `json:"id"`
+	RoomID    string    `json:"room_id"`
+	UserID    string    `json:"user_id"`
+	Comment   string    `json:"comment"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// RoomeResponse represents a reading room response
+type RoomeResponse struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	IsPrivate   bool      `json:"is_private"`
+	InviteCode  *string   `json:"invite_code,omitempty"`
+	AdminID     string    `json:"admin_id"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
 // LoginType constants
 const (
 	LoginTypeEmail        = "email"

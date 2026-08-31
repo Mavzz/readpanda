@@ -27,31 +27,11 @@ func NewBucketHandler(cfg *config.Config) *BucketHandler {
 	return &BucketHandler{Config: cfg}
 }
 
-// extractUserID validates the bearer token and returns the user ID from claims.
-func (h *BucketHandler) extractUserID(w http.ResponseWriter, r *http.Request) (string, bool) {
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		http.Error(w, `{"error": "Authorization header required"}`, http.StatusUnauthorized)
-		return "", false
-	}
-	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 || parts[0] != "Bearer" {
-		http.Error(w, `{"error": "Invalid authorization header"}`, http.StatusUnauthorized)
-		return "", false
-	}
-	claims, err := utils.DecodeToken(parts[1], h.Config.JWTSecret)
-	if err != nil {
-		http.Error(w, `{"error": "Unauthorized"}`, http.StatusUnauthorized)
-		return "", false
-	}
-	return claims.UserID, true
-}
-
 // ── User Buckets ────────────────────────────────────────────
 
-// ListUserBuckets — GET /users/me/buckets
+// ListUserBuckets - GET /users/me/buckets
 func (h *BucketHandler) ListUserBuckets(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.extractUserID(w, r)
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}
@@ -114,7 +94,7 @@ func (h *BucketHandler) ListUserBuckets(w http.ResponseWriter, r *http.Request) 
 
 // CreateUserBucket — POST /users/me/buckets
 func (h *BucketHandler) CreateUserBucket(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.extractUserID(w, r)
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}
@@ -199,7 +179,7 @@ func (h *BucketHandler) CreateUserBucket(w http.ResponseWriter, r *http.Request)
 
 // UpdateUserBucket — PUT /users/me/buckets/{id}
 func (h *BucketHandler) UpdateUserBucket(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.extractUserID(w, r)
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}
@@ -243,7 +223,7 @@ func (h *BucketHandler) UpdateUserBucket(w http.ResponseWriter, r *http.Request)
 
 // DeleteUserBucket — DELETE /users/me/buckets/{id}
 func (h *BucketHandler) DeleteUserBucket(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.extractUserID(w, r)
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}
@@ -267,9 +247,9 @@ func (h *BucketHandler) DeleteUserBucket(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// AddBooksToBucket — POST /users/me/buckets/{id}/books
+// AddBooksToBucket - POST /users/me/buckets/{id}/books
 func (h *BucketHandler) AddBooksToBucket(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.extractUserID(w, r)
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}
@@ -316,9 +296,9 @@ func (h *BucketHandler) AddBooksToBucket(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// RemoveBookFromBucket — DELETE /users/me/buckets/{id}/books/{bookId}
+// RemoveBookFromBucket - DELETE /users/me/buckets/{id}/books/{bookId}
 func (h *BucketHandler) RemoveBookFromBucket(w http.ResponseWriter, r *http.Request) {
-	userID, ok := h.extractUserID(w, r)
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}
@@ -359,11 +339,11 @@ func (h *BucketHandler) RemoveBookFromBucket(w http.ResponseWriter, r *http.Requ
 
 // ── Curated "Our Picks" Buckets ─────────────────────────────
 
-// GetOurPicks — GET /home/our-picks
+// GetOurPicks - GET /home/our-picks
 // Returns all curated buckets for admin portal (X-Application-Type: portal),
 // or only active buckets for mobile/users.
 func (h *BucketHandler) GetOurPicks(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.extractUserID(w, r)
+	_, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
 		http.Error(w, `{"error": "Unauthorized"}`, http.StatusUnauthorized)
 		return
@@ -432,9 +412,9 @@ func (h *BucketHandler) GetOurPicks(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"buckets": buckets})
 }
 
-// GetOurPicksBucketBooks — GET /home/our-picks/{bucketId}/books
+// GetOurPicksBucketBooks - GET /home/our-picks/{bucketId}/books
 func (h *BucketHandler) GetOurPicksBucketBooks(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.extractUserID(w, r)
+	_, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}
@@ -487,10 +467,10 @@ func (h *BucketHandler) GetOurPicksBucketBooks(w http.ResponseWriter, r *http.Re
 
 // ── Admin: Curated Bucket Management ────────────────────────
 
-// AdminListCuratedBuckets — GET /admin/curated-buckets
+// AdminListCuratedBuckets - GET /admin/curated-buckets
 // Returns all curated buckets (including inactive) for admin management.
 func (h *BucketHandler) AdminListCuratedBuckets(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.extractUserID(w, r)
+	_, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}
@@ -558,9 +538,9 @@ func (h *BucketHandler) AdminListCuratedBuckets(w http.ResponseWriter, r *http.R
 	json.NewEncoder(w).Encode(map[string]interface{}{"buckets": buckets})
 }
 
-// AdminCreateCuratedBucket — POST /admin/curated-buckets
+// AdminCreateCuratedBucket - POST /admin/curated-buckets
 func (h *BucketHandler) AdminCreateCuratedBucket(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.extractUserID(w, r)
+	_, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}
@@ -614,9 +594,9 @@ func (h *BucketHandler) AdminCreateCuratedBucket(w http.ResponseWriter, r *http.
 	})
 }
 
-// AdminUpdateCuratedBucket — PUT /home/our-picks/{bucketId}
+// AdminUpdateCuratedBucket - PUT /home/our-picks/{bucketId}
 func (h *BucketHandler) AdminUpdateCuratedBucket(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.extractUserID(w, r)
+	_, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}
@@ -668,9 +648,9 @@ func (h *BucketHandler) AdminUpdateCuratedBucket(w http.ResponseWriter, r *http.
 	})
 }
 
-// AdminDeleteCuratedBucket — DELETE /home/our-picks/{bucketId}
+// AdminDeleteCuratedBucket - DELETE /home/our-picks/{bucketId}
 func (h *BucketHandler) AdminDeleteCuratedBucket(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.extractUserID(w, r)
+	_, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}
@@ -691,9 +671,9 @@ func (h *BucketHandler) AdminDeleteCuratedBucket(w http.ResponseWriter, r *http.
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// AdminAddBooksToCuratedBucket — POST /home/our-picks/{bucketId}/books
+// AdminAddBooksToCuratedBucket - POST /home/our-picks/{bucketId}/books
 func (h *BucketHandler) AdminAddBooksToCuratedBucket(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.extractUserID(w, r)
+	_, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}
@@ -737,9 +717,9 @@ func (h *BucketHandler) AdminAddBooksToCuratedBucket(w http.ResponseWriter, r *h
 	})
 }
 
-// AdminRemoveBookFromCuratedBucket — DELETE /home/our-picks/{bucketId}/books/{bookId}
+// AdminRemoveBookFromCuratedBucket - DELETE /home/our-picks/{bucketId}/books/{bookId}
 func (h *BucketHandler) AdminRemoveBookFromCuratedBucket(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.extractUserID(w, r)
+	_, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}

@@ -35,6 +35,7 @@ func main() {
 	preferencesHandler := handlers.NewPreferencesHandler(cfg)
 	notificationHandler := handlers.NewNotificationHandler(cfg)
 	bucketHandler := handlers.NewBucketHandler(cfg)
+	roomHandler := handlers.NewRoomHandler(cfg)
 
 	// Create router
 	router := mux.NewRouter()
@@ -97,6 +98,10 @@ func main() {
 	router.HandleFunc(apiPrefix+"/home/our-picks/{bucketId}/books", bucketHandler.GetOurPicksBucketBooks).Methods("GET")
 	router.HandleFunc(apiPrefix+"/home/our-picks/{bucketId}/books", bucketHandler.AdminAddBooksToCuratedBucket).Methods("POST")
 	router.HandleFunc(apiPrefix+"/home/our-picks/{bucketId}/books/{bookId}", bucketHandler.AdminRemoveBookFromCuratedBucket).Methods("DELETE")
+
+	// Room routes
+	router.HandleFunc(apiPrefix+"/room/create", roomHandler.CreateRoom).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/my-rooms", roomHandler.GetMyRooms).Methods("GET", "OPTIONS")
 
 	// Start server
 	port := cfg.Port

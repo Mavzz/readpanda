@@ -8,6 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -163,4 +166,39 @@ func CheckToken(tokenString, secret string) bool {
 // Note: This is an alias for VerifyToken kept for API compatibility
 func DecodeToken(tokenString, secret string) (*JWTClaims, error) {
 	return VerifyToken(tokenString, secret)
+}
+
+// extractUserID validates the bearer token and returns the user ID from claims.
+func ExtractUserID(w http.ResponseWriter, r *http.Request, secret string) (string, bool) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		http.Error(w, `{"error": "Authorization header required"}`, http.StatusUnauthorized)
+		return "", false
+	}
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		http.Error(w, `{"error": "Invalid authorization header"}`, http.StatusUnauthorized)
+		return "", false
+	}
+	claims, err := DecodeToken(parts[1], secret)
+	if err != nil {
+		http.Error(w, `{"error": "Unauthorized"}`, http.StatusUnauthorized)
+		return "", false
+	}
+	return claims.UserID, true
+}
+
+const inviteCharset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+// GenerateInviteCode generates a random 6-character unique-looking invite code.
+func GenerateInviteCode() (string, error) {
+	code := make([]byte, 6)
+	for i := 0; i < 6; i++ {
+		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(inviteCharset))))
+		if err != nil {
+			return "", err
+		}
+		code[i] = inviteCharset[num.Int64()]
+	}
+	return string(code), nil
 }
