@@ -2,13 +2,8 @@ package handlers
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/md5"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -54,83 +49,6 @@ func (h *UserHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(users)
 }
 
-// DecryptAESCryptoJS decrypts AES encrypted data from CryptoJS (frontend)
-func DecryptAESCryptoJS(encryptedText, key string) (string, error) {
-	// Decode base64
-	ciphertext, err := base64.StdEncoding.DecodeString(encryptedText)
-	if err != nil {
-		return "", err
-	}
-
-	// CryptoJS uses "Salted__" prefix
-	if len(ciphertext) < 16 || string(ciphertext[:8]) != "Salted__" {
-		return "", fmt.Errorf("invalid ciphertext format")
-	}
-
-	// Extract salt
-	salt := ciphertext[8:16]
-	ciphertext = ciphertext[16:]
-
-	// Derive key and IV using EVP_BytesToKey (OpenSSL compatible)
-	keyIV := evpBytesToKey([]byte(key), salt, 32+16, 1) // 32 bytes key + 16 bytes IV
-	derivedKey := keyIV[:32]
-	iv := keyIV[32:48]
-
-	// Decrypt
-	block, err := aes.NewCipher(derivedKey)
-	if err != nil {
-		return "", err
-	}
-
-	mode := cipher.NewCBCDecrypter(block, iv)
-	plaintext := make([]byte, len(ciphertext))
-	mode.CryptBlocks(plaintext, ciphertext)
-
-	// Remove PKCS7 padding
-	plaintext, err = pkcs7Unpad(plaintext)
-	if err != nil {
-		return "", err
-	}
-
-	return string(plaintext), nil
-}
-
-// Helper functions for CryptoJS compatibility
-func evpBytesToKey(password, salt []byte, keyLen, iterations int) []byte {
-	var (
-		concat   []byte
-		lastHash []byte
-	)
-	for len(concat) < keyLen {
-		// Hash the password + salt (or previous hash + password + salt)
-		hash := md5Hash(append(append(lastHash, password...), salt...))
-		lastHash = hash
-		concat = append(concat, hash...)
-	}
-	return concat[:keyLen]
-}
-
-func md5Hash(data []byte) []byte {
-	// For compatibility with CryptoJS, we need MD5
-	// WARNING: MD5 is NOT cryptographically secure and is only used here for
-	// compatibility with the existing frontend CryptoJS implementation.
-	// TODO: Migrate frontend to use PBKDF2, Argon2, or another secure KDF
-	hash := md5.Sum(data)
-	return hash[:]
-}
-
-func pkcs7Unpad(data []byte) ([]byte, error) {
-	length := len(data)
-	if length == 0 {
-		return nil, fmt.Errorf("invalid padding")
-	}
-	padding := int(data[length-1])
-	if padding > length {
-		return nil, fmt.Errorf("invalid padding")
-	}
-	return data[:length-padding], nil
-}
-
 // CreateUser creates a new user (signup)
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var req models.SignupRequest
@@ -159,15 +77,12 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decrypt the password from frontend
-	decryptedPassword, err := DecryptAESCryptoJS(req.Password, h.Config.CryptoSecret)
-	if err != nil {
-		http.Error(w, `{"error": "Failed to decrypt password"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Hash the password
-	hashedPassword, err := utils.CryptPassword(decryptedPassword)
+	// Hash the password. Transport is TLS-protected already, so the password
+	// arrives as plaintext — no client-side encryption step is needed (it
+	// used to be AES-encrypted with a secret baked into the app bundle,
+	// which added no real security over TLS while making the login/signup
+	// flow depend on both sides agreeing on a matching CryptoJS format).
+	hashedPassword, err := utils.CryptPassword(req.Password)
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -195,7 +110,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate tokens
-	accessToken, refreshToken, err := utils.GenerateTokens(newUserUID, h.Config.JWTSecret, h.Config.JWTRefreshSecret)
+	accessToken, refreshToken, err := utils.GenerateTokens(newUserUID, models.RoleUser, h.Config.JWTSecret, h.Config.JWTRefreshSecret)
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -234,32 +149,26 @@ func (h *UserHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decrypt the password from frontend
-	decryptedPassword, err := DecryptAESCryptoJS(req.Password, h.Config.CryptoSecret)
-	if err != nil {
-		http.Error(w, `{"error": "Failed to decrypt password"}`, http.StatusBadRequest)
-		return
-	}
-
 	// Check if user exists
 	var user models.User
-	err = database.DB.QueryRow(
-		"SELECT uuid, username, email, password, uuid FROM users WHERE username = $1",
+	err := database.DB.QueryRow(
+		"SELECT uuid, username, email, password, role FROM users WHERE username = $1",
 		req.Username,
-	).Scan(&user.UUID, &user.Username, &user.Email, &user.Password, &user.UUID)
+	).Scan(&user.UUID, &user.Username, &user.Email, &user.Password, &user.Role)
 	if err != nil {
 		http.Error(w, `{"error": "Invalid username or password"}`, http.StatusUnauthorized)
 		return
 	}
 
-	// Verify password
-	if !utils.DecryptPassword(decryptedPassword, user.Password) {
+	// Verify password. Transport is TLS-protected already, so req.Password
+	// arrives as plaintext — no client-side decryption step needed.
+	if !utils.DecryptPassword(req.Password, user.Password) {
 		http.Error(w, `{"error": "Invalid username or password"}`, http.StatusUnauthorized)
 		return
 	}
 
 	// Generate tokens
-	accessToken, refreshToken, err := utils.GenerateTokens(user.UUID, h.Config.JWTSecret, h.Config.JWTRefreshSecret)
+	accessToken, refreshToken, err := utils.GenerateTokens(user.UUID, user.Role, h.Config.JWTSecret, h.Config.JWTRefreshSecret)
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -317,19 +226,33 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email := payload.Claims["email"].(string)
-	name := payload.Claims["name"].(string)
+	email, ok := payload.Claims["email"].(string)
+	if !ok || email == "" {
+		http.Error(w, `{"error": "Google token missing email claim"}`, http.StatusUnauthorized)
+		return
+	}
+	// Only trust the email for account lookup/linking if Google has verified
+	// it — otherwise an unverified address could be used to log into (or
+	// create) an account it doesn't actually own.
+	if verified, _ := payload.Claims["email_verified"].(bool); !verified {
+		http.Error(w, `{"error": "Google email not verified"}`, http.StatusUnauthorized)
+		return
+	}
+	name, _ := payload.Claims["name"].(string)
+	if name == "" {
+		name = strings.SplitN(email, "@", 2)[0]
+	}
 	sub := payload.Subject
-	picture := payload.Claims["picture"].(string)
+	picture, _ := payload.Claims["picture"].(string)
 
 	// Check if user exists
 	var user models.User
-	err = database.DB.QueryRow("SELECT email, username, uuid FROM users WHERE email = $1", email).
-		Scan(&user.Email, &user.Username, &user.UUID)
+	err = database.DB.QueryRow("SELECT email, username, uuid, role FROM users WHERE email = $1", email).
+		Scan(&user.Email, &user.Username, &user.UUID, &user.Role)
 
 	if err == nil {
 		// User exists, generate tokens
-		accessToken, refreshToken, err := utils.GenerateTokens(user.UUID, h.Config.JWTSecret, h.Config.JWTRefreshSecret)
+		accessToken, refreshToken, err := utils.GenerateTokens(user.UUID, user.Role, h.Config.JWTSecret, h.Config.JWTRefreshSecret)
 		if err != nil {
 			http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 			return
@@ -365,13 +288,29 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 
 	newUserUID := utils.GenerateUserUID()
-	err = tx.QueryRow(
-		"INSERT INTO users (username, email, isactive, login_type, uuid, google_sub) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, username",
-		name, email, true, models.LoginTypeSocialGoogle, newUserUID, sub,
-	).Scan(&user.ID, &user.Username)
-	if err != nil {
-		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
-		return
+	// The Google display name isn't guaranteed unique and username has a
+	// UNIQUE constraint — try the raw name first, then fall back to
+	// name+random suffix on collision (same retry-on-conflict shape used for
+	// room invite codes).
+	username := name
+	for attempt := 0; ; attempt++ {
+		err = tx.QueryRow(
+			"INSERT INTO users (username, email, isactive, login_type, uuid, google_sub) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, username",
+			username, email, true, models.LoginTypeSocialGoogle, newUserUID, sub,
+		).Scan(&user.ID, &user.Username)
+		if err == nil {
+			break
+		}
+		if !isUniqueViolation(err) || attempt >= 5 {
+			http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+		suffix, genErr := utils.GenerateInviteCode()
+		if genErr != nil {
+			http.Error(w, `{"error": "Failed to generate a unique username"}`, http.StatusInternalServerError)
+			return
+		}
+		username = name + "_" + strings.ToLower(suffix)
 	}
 
 	// Initialize user preferences
@@ -382,7 +321,7 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate tokens
-	accessToken, refreshToken, err := utils.GenerateTokens(newUserUID, h.Config.JWTSecret, h.Config.JWTRefreshSecret)
+	accessToken, refreshToken, err := utils.GenerateTokens(newUserUID, models.RoleUser, h.Config.JWTSecret, h.Config.JWTRefreshSecret)
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -447,15 +386,42 @@ func (h *UserHandler) RefreshAccessToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Generate new access token
-	accessToken, _, err := utils.GenerateTokens(claims.UserID, h.Config.JWTSecret, h.Config.JWTRefreshSecret)
+	// Re-fetch the user's current role rather than trusting a role embedded
+	// in the refresh token, so a role change takes effect on the very next
+	// refresh instead of waiting out the old access token's TTL.
+	var role string
+	if err := database.DB.QueryRow("SELECT role FROM users WHERE uuid = $1", claims.UserID).Scan(&role); err != nil {
+		http.Error(w, `{"error": "User not found"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Generate a new access token AND rotate the refresh token — reusing the
+	// same refresh token for its full 7-day life means a leaked token stays
+	// valid with no way to detect or limit reuse.
+	accessToken, newRefreshToken, err := utils.GenerateTokens(claims.UserID, role, h.Config.JWTSecret, h.Config.JWTRefreshSecret)
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
 	}
 
+	tx, err := database.DB.Begin()
+	if err != nil {
+		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+	if err := storeRefreshToken(tx, claims.UserID, newRefreshToken); err != nil {
+		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+
 	response := map[string]string{
-		"accessToken": accessToken,
+		"accessToken":  accessToken,
+		"refreshToken": newRefreshToken,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -100,15 +100,19 @@ func EncryptAES(plaintext, key string) (string, error) {
 // JWTClaims represents custom JWT claims
 type JWTClaims struct {
 	UserID string `json:"userId"`
+	Role   string `json:"role,omitempty"`
 	Type   string `json:"type,omitempty"`
 	jwt.RegisteredClaims
 }
 
-// GenerateTokens generates access and refresh tokens
-func GenerateTokens(userID, jwtSecret, jwtRefreshSecret string) (accessToken, refreshToken string, err error) {
+// GenerateTokens generates access and refresh tokens. role is embedded in the
+// access token only (refresh tokens don't need it — access is re-derived from
+// the DB on every /token/refresh call so a role change takes effect promptly).
+func GenerateTokens(userID, role, jwtSecret, jwtRefreshSecret string) (accessToken, refreshToken string, err error) {
 	// Generate access token (1 hour)
 	accessClaims := JWTClaims{
 		UserID: userID,
+		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
 		},
@@ -183,6 +187,32 @@ func ExtractUserID(w http.ResponseWriter, r *http.Request, secret string) (strin
 	claims, err := DecodeToken(parts[1], secret)
 	if err != nil {
 		http.Error(w, `{"error": "Unauthorized"}`, http.StatusUnauthorized)
+		return "", false
+	}
+	return claims.UserID, true
+}
+
+// RequireAdmin validates the bearer token like ExtractUserID, and additionally
+// requires the "admin" role claim. Use this instead of ExtractUserID for any
+// endpoint that should be restricted to admins (e.g. curated-bucket writes).
+func RequireAdmin(w http.ResponseWriter, r *http.Request, secret string) (string, bool) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		http.Error(w, `{"error": "Authorization header required"}`, http.StatusUnauthorized)
+		return "", false
+	}
+	parts := strings.Split(authHeader, " ")
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		http.Error(w, `{"error": "Invalid authorization header"}`, http.StatusUnauthorized)
+		return "", false
+	}
+	claims, err := DecodeToken(parts[1], secret)
+	if err != nil {
+		http.Error(w, `{"error": "Unauthorized"}`, http.StatusUnauthorized)
+		return "", false
+	}
+	if claims.Role != "admin" {
+		http.Error(w, `{"error": "Forbidden"}`, http.StatusForbidden)
 		return "", false
 	}
 	return claims.UserID, true

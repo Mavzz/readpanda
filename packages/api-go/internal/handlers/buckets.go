@@ -337,6 +337,65 @@ func (h *BucketHandler) RemoveBookFromBucket(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// GetUserBucketBooks - GET /users/me/buckets/{id}/books
+// Returns the full book list for a custom bucket (books_preview elsewhere is
+// capped at 2 for the list view — this is the detail-screen fetch).
+func (h *BucketHandler) GetUserBucketBooks(w http.ResponseWriter, r *http.Request) {
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	if !ok {
+		return
+	}
+
+	bucketID := mux.Vars(r)["id"]
+
+	var name string
+	err := database.DB.QueryRow(
+		`SELECT name FROM user_buckets WHERE id = $1 AND user_id = $2`, bucketID, userID,
+	).Scan(&name)
+	if err == sql.ErrNoRows {
+		http.Error(w, `{"error": "Bucket not found"}`, http.StatusNotFound)
+		return
+	} else if err != nil {
+		http.Error(w, `{"error": "Failed to fetch bucket"}`, http.StatusInternalServerError)
+		return
+	}
+
+	rows, err := database.DB.Query(
+		`SELECT b.book_id, b.title, b.cover_image_url, b.manuscript_url
+		 FROM user_bucket_books ubb
+		 JOIN books b ON b.book_id = ubb.book_id
+		 WHERE ubb.bucket_id = $1
+		 ORDER BY ubb.added_at`,
+		bucketID,
+	)
+	if err != nil {
+		http.Error(w, `{"error": "Failed to fetch books"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	books := []models.BookPreview{}
+	for rows.Next() {
+		var bp models.BookPreview
+		if err := rows.Scan(&bp.BookID, &bp.Title, &bp.CoverImageURL, &bp.ManuscriptURL); err != nil {
+			http.Error(w, `{"error": "Failed to scan book"}`, http.StatusInternalServerError)
+			return
+		}
+		books = append(books, bp)
+	}
+	if err := rows.Err(); err != nil {
+		http.Error(w, `{"error": "Failed to fetch books"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":    bucketID,
+		"name":  name,
+		"books": books,
+	})
+}
+
 // ── Curated "Our Picks" Buckets ─────────────────────────────
 
 // GetOurPicks - GET /home/our-picks
@@ -434,7 +493,7 @@ func (h *BucketHandler) GetOurPicksBucketBooks(w http.ResponseWriter, r *http.Re
 	}
 
 	rows, err := database.DB.Query(
-		`SELECT b.book_id, b.title, b.cover_image_url, b.genre
+		`SELECT b.book_id, b.title, b.cover_image_url, b.manuscript_url, b.genre
 		 FROM curated_bucket_books cbb
 		 JOIN books b ON b.book_id = cbb.book_id
 		 WHERE cbb.bucket_id = $1
@@ -450,11 +509,15 @@ func (h *BucketHandler) GetOurPicksBucketBooks(w http.ResponseWriter, r *http.Re
 	books := []models.CuratedBookEntry{}
 	for rows.Next() {
 		var entry models.CuratedBookEntry
-		if err := rows.Scan(&entry.BookID, &entry.Title, &entry.CoverImageURL, &entry.Genre); err != nil {
+		if err := rows.Scan(&entry.BookID, &entry.Title, &entry.CoverImageURL, &entry.ManuscriptURL, &entry.Genre); err != nil {
 			http.Error(w, `{"error": "Failed to scan book"}`, http.StatusInternalServerError)
 			return
 		}
 		books = append(books, entry)
+	}
+	if err := rows.Err(); err != nil {
+		http.Error(w, `{"error": "Failed to fetch books"}`, http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -540,7 +603,7 @@ func (h *BucketHandler) AdminListCuratedBuckets(w http.ResponseWriter, r *http.R
 
 // AdminCreateCuratedBucket - POST /admin/curated-buckets
 func (h *BucketHandler) AdminCreateCuratedBucket(w http.ResponseWriter, r *http.Request) {
-	_, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	_, ok := utils.RequireAdmin(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}
@@ -596,7 +659,7 @@ func (h *BucketHandler) AdminCreateCuratedBucket(w http.ResponseWriter, r *http.
 
 // AdminUpdateCuratedBucket - PUT /home/our-picks/{bucketId}
 func (h *BucketHandler) AdminUpdateCuratedBucket(w http.ResponseWriter, r *http.Request) {
-	_, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	_, ok := utils.RequireAdmin(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}
@@ -650,7 +713,7 @@ func (h *BucketHandler) AdminUpdateCuratedBucket(w http.ResponseWriter, r *http.
 
 // AdminDeleteCuratedBucket - DELETE /home/our-picks/{bucketId}
 func (h *BucketHandler) AdminDeleteCuratedBucket(w http.ResponseWriter, r *http.Request) {
-	_, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	_, ok := utils.RequireAdmin(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}
@@ -673,7 +736,7 @@ func (h *BucketHandler) AdminDeleteCuratedBucket(w http.ResponseWriter, r *http.
 
 // AdminAddBooksToCuratedBucket - POST /home/our-picks/{bucketId}/books
 func (h *BucketHandler) AdminAddBooksToCuratedBucket(w http.ResponseWriter, r *http.Request) {
-	_, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	_, ok := utils.RequireAdmin(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}
@@ -719,7 +782,7 @@ func (h *BucketHandler) AdminAddBooksToCuratedBucket(w http.ResponseWriter, r *h
 
 // AdminRemoveBookFromCuratedBucket - DELETE /home/our-picks/{bucketId}/books/{bookId}
 func (h *BucketHandler) AdminRemoveBookFromCuratedBucket(w http.ResponseWriter, r *http.Request) {
-	_, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	_, ok := utils.RequireAdmin(w, r, h.Config.JWTSecret)
 	if !ok {
 		return
 	}

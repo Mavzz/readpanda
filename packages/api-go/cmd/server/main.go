@@ -86,6 +86,7 @@ func main() {
 	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}", bucketHandler.UpdateUserBucket).Methods("PUT", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}", bucketHandler.DeleteUserBucket).Methods("DELETE", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}/books", bucketHandler.AddBooksToBucket).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}/books", bucketHandler.GetUserBucketBooks).Methods("GET")
 	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}/books/{bookId}", bucketHandler.RemoveBookFromBucket).Methods("DELETE", "OPTIONS")
 
 	// Curated "Our Picks" routes
@@ -102,6 +103,11 @@ func main() {
 	// Room routes
 	router.HandleFunc(apiPrefix+"/room/create", roomHandler.CreateRoom).Methods("POST", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/room/my-rooms", roomHandler.GetMyRooms).Methods("GET", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/join", roomHandler.JoinRoom).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}", roomHandler.GetRoomDetail).Methods("GET", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}/reading", roomHandler.SetRoomReading).Methods("PATCH", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}", roomHandler.DeleteRoom).Methods("DELETE", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}/members/me", roomHandler.LeaveRoom).Methods("DELETE", "OPTIONS")
 
 	// Start server
 	port := cfg.Port

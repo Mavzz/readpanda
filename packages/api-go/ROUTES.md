@@ -99,6 +99,26 @@ Curated buckets shown on the home screen. Admin routes are portal-only.
 
 ---
 
+## Rooms
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| POST | `/room/create` | Yes | Create a room. Body: `{ name, description, is_private }`. Every room gets an invite code, and the creator is enrolled as an `admin` member. |
+| GET | `/room/my-rooms` | Yes | Rooms the user created or joined. Returns a bare array. |
+| POST | `/room/join` | Yes | Join a room by code. Body: `{ invite_code }`. `404` unknown code, `409` already a member. |
+| GET | `/room/{id}` | Yes | Full Room Detail: the room, `members[]` (`user_id`, `username`, `role`, `joined_at`), `current_book`, and `bucket` (`{ id, name, type, books[] }`). `403` for non-members. |
+| DELETE | `/room/{id}` | Yes | Delete a room. Creator-only (`403`); `room_members` rows cascade. Returns `204`. |
+| DELETE | `/room/{id}/members/me` | Yes | Leave a room. The creator can't leave (`403`) — they delete it instead. Returns `204`. |
+| PATCH | `/room/{id}/reading` | Yes | Set what the room reads. Body: `{ current_book_id, bucket_id, bucket_type }` (`bucket_type` is `user` or `curated`; send `null`s to clear). Creator-only (`403`); with a bucket set, `current_book_id` must belong to it (`400`). Returns the updated Room Detail. |
+
+A room reads **either** a standalone book **or** a bucket (a shared reading
+list) with a current book chosen from it. Buckets live in two tables
+(`user_buckets` / `curated_buckets`), so `rooms.current_bucket_id` is paired
+with `current_bucket_type` rather than a single-table foreign key — see
+`scripts/migrate_room_reading.sql`.
+
+---
+
 ## Middleware
 
 All routes have the following middleware applied:

@@ -14,6 +14,7 @@ type User struct {
 	LoginType string    `json:"login_type"`
 	UUID      string    `json:"uuid"`
 	GoogleSub *string   `json:"google_sub,omitempty"`
+	Role      string    `json:"role,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -97,6 +98,7 @@ type CuratedBookEntry struct {
 	Title         string  `json:"title"`
 	AuthorName    string  `json:"author_name,omitempty"`
 	CoverImageURL *string `json:"cover_image_url,omitempty"`
+	ManuscriptURL *string `json:"manuscript_url,omitempty"`
 	Genre         string  `json:"genre"`
 	Rating        float64 `json:"rating"`
 }
@@ -141,6 +143,33 @@ type RoomMember struct {
 	JoinedAt  time.Time `json:"joined_at"`
 }
 
+// RoomMemberDetail is a member as the Room Detail screen needs them —
+// the user's name and role alongside the membership row.
+type RoomMemberDetail struct {
+	UserID   string    `json:"user_id"`
+	Username string    `json:"username"`
+	Role     string    `json:"role"`
+	JoinedAt time.Time `json:"joined_at"`
+}
+
+// RoomBucket is the reading list a room is working through. Buckets live in
+// two tables, so Type ("user" | "curated") says which one ID refers to.
+type RoomBucket struct {
+	ID    string        `json:"id"`
+	Name  string        `json:"name"`
+	Type  string        `json:"type"`
+	Books []BookPreview `json:"books"`
+}
+
+// RoomDetail is the full Room Detail payload: the room, who's in it, and what
+// it's reading (a standalone book, or a current book from a bucket).
+type RoomDetail struct {
+	Room
+	CurrentBook *BookPreview       `json:"current_book,omitempty"`
+	Bucket      *RoomBucket        `json:"bucket,omitempty"`
+	Members     []RoomMemberDetail `json:"members"`
+}
+
 // RoomComment represents a comment in a reading room
 type RoomComment struct {
 	ID        string    `json:"id"`
@@ -150,22 +179,17 @@ type RoomComment struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// RoomeResponse represents a reading room response
-type RoomeResponse struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	IsPrivate   bool      `json:"is_private"`
-	InviteCode  *string   `json:"invite_code,omitempty"`
-	AdminID     string    `json:"admin_id"`
-	CreatedAt   time.Time `json:"created_at"`
-}
-
 // LoginType constants
 const (
 	LoginTypeEmail        = "email"
 	LoginTypeSocialGoogle = "social_google"
 	LoginTypeLDAP         = "ldap"
+)
+
+// Role constants
+const (
+	RoleUser  = "user"
+	RoleAdmin = "admin"
 )
 
 // SignupRequest represents the signup request body
