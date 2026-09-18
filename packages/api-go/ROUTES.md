@@ -119,6 +119,37 @@ with `current_bucket_type` rather than a single-table foreign key — see
 
 ---
 
+## Comments
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| GET | `/room/{id}/book/{bookId}/comments` | Yes | The comment layer for one book in one room. Returns `{ room_id, book_id, furthest_page, threads[], locked_count, unlocked_unread_count }`. Each thread is `{ anchor_key, page, anchor_text, anchor_bounds, file_hash, comments[], unread_count }`, and each comment carries `likes`, `liked_by_me`, `read` and its `replies[]`. `403` for non-members. |
+| POST | `/room/{id}/book/{bookId}/comments` | Yes | Create a comment. Body: `{ page, anchor_text, anchor_bounds, parent_id, body, client_id, file_hash }`. `page` is 0-based; omit `anchor_text` for a page-level comment. Sending `parent_id` makes it a reply, which inherits the root's page, anchor and room — values in the body are ignored. Also advances the author's `furthest_page` to `GREATEST(existing, page)`. `201`; `400` nested reply or bad body; `403` non-member; `404` unknown room, book or parent. |
+| POST | `/room/{id}/book/{bookId}/comments/read` | Yes | Mark comments read. Body: `{ comment_ids: [] }`; ids that aren't comments on this book in this room are dropped. Returns `204`. |
+| POST | `/comments/{commentId}/like` | Yes | Like a comment. Idempotent. Membership is checked through the comment's own room. Returns `204`. |
+| DELETE | `/comments/{commentId}/like` | Yes | Remove a like. Idempotent. Returns `204`. |
+
+Comments key on the **room and the book together**: the same book read in two
+rooms is two conversations, and a comment never follows a reader into a room
+its author didn't join. Everything sharing an `anchor_key` — derived
+server-side from the page plus the normalized selected text — is one thread and
+one gutter dot, so two people highlighting the same sentence land in the same
+conversation. Replies are one level deep; a reply to a reply is a `400`.
+
+Visibility is decided here, not in the client. A comment is unlocked when its
+page is at or before the caller's `reading_progress.furthest_page`, or when the
+caller wrote it. Everything still ahead of them contributes only to
+`locked_count` — no id, no page, no preview — so the response holds nothing to
+read ahead with. `furthest_page` is used rather than `current_page` so that
+flipping back to re-read an earlier passage can't re-lock what a reader has
+already been shown. See `scripts/migrate_book_comments.sql`.
+
+`file_hash` is the fingerprint of the PDF the anchor was taken from. Two files
+can share a `book_id`, so the reader compares this against the document it
+actually opened and declines to draw anchors from a different edition.
+
+---
+
 ## Middleware
 
 All routes have the following middleware applied:

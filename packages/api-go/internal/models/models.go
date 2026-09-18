@@ -1,6 +1,7 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -170,13 +171,98 @@ type RoomDetail struct {
 	Members     []RoomMemberDetail `json:"members"`
 }
 
-// RoomComment represents a comment in a reading room
-type RoomComment struct {
-	ID        string    `json:"id"`
-	RoomID    string    `json:"room_id"`
-	UserID    string    `json:"user_id"`
-	Comment   string    `json:"comment"`
-	CreatedAt time.Time `json:"created_at"`
+// ReadingProgress is one reader's place in one book. Progress is personal and
+// keys on the book rather than the room, so the same position follows a reader
+// across every room reading that book — and survives the room going away.
+type ReadingProgress struct {
+	UserID      string `json:"user_id"`
+	BookID      string `json:"book_id"`
+	CurrentPage int    `json:"current_page"`
+	TotalPages  int    `json:"total_pages"`
+	// The furthest page ever reached, which only climbs. Comments unlock
+	// against this rather than CurrentPage, so re-reading an earlier passage
+	// can't hide a comment the reader has already been shown.
+	FurthestPage int       `json:"furthest_page"`
+	ProgressPct  int       `json:"progress_pct"`
+	LastReadAt   time.Time `json:"last_read_at"`
+}
+
+// MemberProgress is one member on a room's pace track. A member who hasn't
+// opened the book yet still appears, at page 0 with a nil LastReadAt — the
+// track shows who is behind, so it can't leave people out.
+type MemberProgress struct {
+	UserID      string     `json:"user_id"`
+	Username    string     `json:"username"`
+	CurrentPage int        `json:"current_page"`
+	TotalPages  int        `json:"total_pages"`
+	ProgressPct int        `json:"progress_pct"`
+	LastReadAt  *time.Time `json:"last_read_at"`
+}
+
+// RoomProgress is the pace track for whatever a room is currently reading.
+// A room that hasn't chosen a book yet returns an empty BookID and no members:
+// there is no book to be paced against.
+type RoomProgress struct {
+	RoomID  string           `json:"room_id"`
+	BookID  string           `json:"book_id"`
+	Members []MemberProgress `json:"members"`
+}
+
+// CommentAnchor is where in the manuscript a comment is attached. Text is the
+// passage the author selected, and is empty for a page-level comment — 6b
+// omits the quote block for those. Bounds is the fallback for redrawing the
+// highlight when the text can no longer be found in the document.
+type CommentAnchor struct {
+	Page   int             `json:"page"`
+	Text   string          `json:"text"`
+	Bounds json.RawMessage `json:"bounds,omitempty"`
+	Key    string          `json:"key"`
+}
+
+// BookComment is one comment on a passage of a book, inside a room. Replies
+// hang off their root and inherit its anchor and room — a reply is part of the
+// conversation about a passage, not a new place in the book.
+type BookComment struct {
+	ID        string        `json:"id"`
+	RoomID    string        `json:"room_id"`
+	BookID    string        `json:"book_id"`
+	UserID    string        `json:"user_id"`
+	Username  string        `json:"username"`
+	Page      int           `json:"page"`
+	Anchor    CommentAnchor `json:"anchor"`
+	Body      string        `json:"body"`
+	ParentID  string        `json:"parent_id,omitempty"`
+	Likes     int           `json:"likes"`
+	LikedByMe bool          `json:"liked_by_me"`
+	Read      bool          `json:"read"`
+	CreatedAt time.Time     `json:"created_at"`
+	Replies   []BookComment `json:"replies"`
+}
+
+// BookCommentThread is every comment sharing one anchor — one gutter dot in
+// the reader, one sheet in 6b.
+type BookCommentThread struct {
+	AnchorKey    string          `json:"anchor_key"`
+	Page         int             `json:"page"`
+	AnchorText   string          `json:"anchor_text"`
+	AnchorBounds json.RawMessage `json:"anchor_bounds,omitempty"`
+	FileHash     string          `json:"file_hash,omitempty"`
+	Comments     []BookComment   `json:"comments"`
+	UnreadCount  int             `json:"unread_count"`
+}
+
+// BookCommentsResponse is the comment layer for one book in one room.
+//
+// LockedCount is deliberately a bare integer. A comment the reader hasn't
+// reached yet contributes nothing else to this response — no id, no page, no
+// preview — so there is nothing in the payload to read ahead with.
+type BookCommentsResponse struct {
+	RoomID              string              `json:"room_id"`
+	BookID              string              `json:"book_id"`
+	FurthestPage        int                 `json:"furthest_page"`
+	Threads             []BookCommentThread `json:"threads"`
+	LockedCount         int                 `json:"locked_count"`
+	UnlockedUnreadCount int                 `json:"unlocked_unread_count"`
 }
 
 // LoginType constants
