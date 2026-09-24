@@ -99,6 +99,57 @@ Curated buckets shown on the home screen. Admin routes are portal-only.
 
 ---
 
+## Rooms
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| POST | `/room/create` | Yes | Create a room. Body: `{ name, description, is_private }`. Every room gets an invite code, and the creator is enrolled as an `admin` member. |
+| GET | `/room/my-rooms` | Yes | Rooms the user created or joined. Returns a bare array. |
+| POST | `/room/join` | Yes | Join a room by code. Body: `{ invite_code }`. `404` unknown code, `409` already a member. |
+| GET | `/room/{id}` | Yes | Full Room Detail: the room, `members[]` (`user_id`, `username`, `role`, `joined_at`), `current_book`, and `bucket` (`{ id, name, type, books[] }`). `403` for non-members. |
+| DELETE | `/room/{id}` | Yes | Delete a room. Creator-only (`403`); `room_members` rows cascade. Returns `204`. |
+| DELETE | `/room/{id}/members/me` | Yes | Leave a room. The creator can't leave (`403`) — they delete it instead. Returns `204`. |
+| PATCH | `/room/{id}/reading` | Yes | Set what the room reads. Body: `{ current_book_id, bucket_id, bucket_type }` (`bucket_type` is `user` or `curated`; send `null`s to clear). Creator-only (`403`); with a bucket set, `current_book_id` must belong to it (`400`). Returns the updated Room Detail. |
+
+A room reads **either** a standalone book **or** a bucket (a shared reading
+list) with a current book chosen from it. Buckets live in two tables
+(`user_buckets` / `curated_buckets`), so `rooms.current_bucket_id` is paired
+with `current_bucket_type` rather than a single-table foreign key — see
+`scripts/migrate_room_reading.sql`.
+
+---
+
+## Comments
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| GET | `/room/{id}/book/{bookId}/comments` | Yes | The comment layer for one book in one room. Returns `{ room_id, book_id, furthest_page, threads[], locked_count, unlocked_unread_count }`. Each thread is `{ anchor_key, page, anchor_text, anchor_bounds, file_hash, comments[], unread_count }`, and each comment carries `likes`, `liked_by_me`, `read` and its `replies[]`. `403` for non-members. |
+| POST | `/room/{id}/book/{bookId}/comments` | Yes | Create a comment. Body: `{ page, anchor_text, anchor_bounds, parent_id, body, client_id, file_hash }`. `page` is 0-based; omit `anchor_text` for a page-level comment. Sending `parent_id` makes it a reply, which inherits the root's page, anchor and room — values in the body are ignored. Also advances the author's `furthest_page` to `GREATEST(existing, page)`. `201`; `400` nested reply or bad body; `403` non-member; `404` unknown room, book or parent. |
+| POST | `/room/{id}/book/{bookId}/comments/read` | Yes | Mark comments read. Body: `{ comment_ids: [] }`; ids that aren't comments on this book in this room are dropped. Returns `204`. |
+| POST | `/comments/{commentId}/like` | Yes | Like a comment. Idempotent. Membership is checked through the comment's own room. Returns `204`. |
+| DELETE | `/comments/{commentId}/like` | Yes | Remove a like. Idempotent. Returns `204`. |
+
+Comments key on the **room and the book together**: the same book read in two
+rooms is two conversations, and a comment never follows a reader into a room
+its author didn't join. Everything sharing an `anchor_key` — derived
+server-side from the page plus the normalized selected text — is one thread and
+one gutter dot, so two people highlighting the same sentence land in the same
+conversation. Replies are one level deep; a reply to a reply is a `400`.
+
+Visibility is decided here, not in the client. A comment is unlocked when its
+page is at or before the caller's `reading_progress.furthest_page`, or when the
+caller wrote it. Everything still ahead of them contributes only to
+`locked_count` — no id, no page, no preview — so the response holds nothing to
+read ahead with. `furthest_page` is used rather than `current_page` so that
+flipping back to re-read an earlier passage can't re-lock what a reader has
+already been shown. See `scripts/migrate_book_comments.sql`.
+
+`file_hash` is the fingerprint of the PDF the anchor was taken from. Two files
+can share a `book_id`, so the reader compares this against the document it
+actually opened and declines to draw anchors from a different edition.
+
+---
+
 ## Middleware
 
 All routes have the following middleware applied:
