@@ -61,10 +61,27 @@ Authorization: Bearer <access_token>
 
 ## Notifications
 
+Every route here acts on the caller, taken from the access token. The old `?username=` parameter is ignored.
+
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| GET | `/notifications?username={username}` | Yes | Get all notifications for a user, ordered by newest first. Returns `[ { id, user_id, message, is_read, created_at } ]`. |
-| GET | `/notifications/unread/count?username={username}` | Yes | Get the count of unread notifications. Returns `{ unread_count: <int> }`. |
+| GET | `/notifications` | Yes | The caller's notifications, newest first. Returns `[ { id, user_id, type, title, message, book_id, is_read, created_at } ]`, or `[]` when empty. `type` is `SYSTEM` or `NEW_BOOK`. For `NEW_BOOK`, `book_id` names the book to open (null if it was deleted). |
+| GET | `/notifications/unread/count` | Yes | Returns `{ unread_count: <int> }`. |
+| PUT | `/notifications/{id}/read` | Yes | Mark one notification read. Idempotent. `204`, or `404` if it isn't the caller's. |
+| POST | `/users/me/devices` | Yes | Register an FCM token for push. Body: `{ token, platform }`, where `platform` is `ios` or `android`. Upserts on the token, so a phone that switches accounts moves to the new one. `204`. |
+| DELETE | `/users/me/devices/{token}` | Yes | Unregister a device (URL-encode the token). Only removes the caller's own token. Idempotent. `204`. |
+
+### Where notifications come from
+
+`internal/notify` writes the inbox row, then pushes to the recipient's registered devices in the background. The row is the record: if push is unconfigured or a send fails, the notification is still in the inbox. Tokens that FCM reports as unregistered are deleted.
+
+| Trigger | Recipients | Notification |
+|---------|------------|--------------|
+| `POST /books/upload` with a manuscript | Every user except the publisher | `NEW_BOOK`, "New book added", `book_id` set |
+
+Push payload `data`: `{ type, notification_id, book_id? }`.
+
+Push is enabled when `FIREBASE_PROJECT_ID` (or a service account file with a `project_id`) and credentials are set; see `.env.local.example`. Without them the server logs `Push notifications disabled` at startup and everything else still works.
 
 ---
 
@@ -96,6 +113,21 @@ Curated buckets shown on the home screen. Admin routes are portal-only.
 | GET | `/home/our-picks/{bucketId}/books` | Yes | Get all books in a curated bucket. |
 | POST | `/home/our-picks/{bucketId}/books` | Yes | (Admin) Add books to a curated bucket. |
 | DELETE | `/home/our-picks/{bucketId}/books/{bookId}` | Yes | (Admin) Remove a book from a curated bucket. |
+
+---
+
+## Admin Data Browser (Admin)
+
+Generic view over every table in the `public` schema, used by the portal's Users and Database pages. All routes require the `admin` role. Table and column names are checked against the catalog; values are always bind parameters. Values come back as text, and `password` is redacted.
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| GET | `/admin/tables` | Yes | (Admin) List tables with row counts. |
+| GET | `/admin/tables/{table}` | Yes | (Admin) Table schema: columns (type, nullable, default, primary key, enum values) and primary key. |
+| GET | `/admin/tables/{table}/rows` | Yes | (Admin) Page through rows. Query: `limit` (≤500, default 50), `offset`, `sort`, `dir` (`asc`/`desc`), `search` (matches the whole row as text). |
+| POST | `/admin/tables/{table}/rows` | Yes | (Admin) Insert a row. Body: `{ "<column>": value }`; omitted columns get their default. Returns the inserted row. |
+| DELETE | `/admin/tables/{table}/rows` | Yes | (Admin) Delete one row by primary key. Body: `{ "key": { "<pk column>": value } }`. |
+| GET | `/admin/users/{uuid}` | Yes | (Admin) A user plus their rows in every table with a foreign key to `users` (first 100 per table). |
 
 ---
 
@@ -168,5 +200,6 @@ internal/middleware/          — CORS and logging middleware
 internal/models/             — Data models / request types
 internal/config/             — Environment configuration
 internal/database/           — PostgreSQL connection
-internal/utils/              — JWT, hashing, Firebase, R2 storage helpers
+internal/notify/             — Inbox writes + push fan-out
+internal/utils/              — JWT, hashing, Firebase (storage, FCM), R2 storage helpers
 ```

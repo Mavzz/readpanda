@@ -12,6 +12,47 @@ import (
 	"google.golang.org/api/option"
 )
 
+// FirebaseCredentialOption builds the service-account credentials shared by
+// every Firebase client (Storage, Cloud Messaging): the service account file
+// when FIREBASE_SERVICE_ACCOUNT_PATH is set, otherwise the individual
+// FIREBASE_* env vars.
+func FirebaseCredentialOption(cfg *config.Config) (option.ClientOption, error) {
+	// Prefer service account file if path is set
+	if cfg.FirebaseServiceAccountPath != "" {
+		if _, err := os.Stat(cfg.FirebaseServiceAccountPath); err != nil {
+			return nil, fmt.Errorf("service account file not found: %w", err)
+		}
+		fmt.Printf("Using service account file: %s\n", cfg.FirebaseServiceAccountPath)
+		return option.WithCredentialsFile(cfg.FirebaseServiceAccountPath), nil
+	}
+
+	// Fall back to constructing credentials from individual env vars
+	credJSON := fmt.Sprintf(`{
+		"type": "%s",
+		"project_id": "%s",
+		"private_key_id": "%s",
+		"private_key": %s,
+		"client_email": "%s",
+		"client_id": "%s",
+		"auth_uri": "%s",
+		"token_uri": "%s",
+		"auth_provider_x509_cert_url": "%s",
+		"client_x509_cert_url": "%s"
+	}`,
+		cfg.FirebaseType,
+		cfg.FirebaseProjectID,
+		cfg.FirebasePrivateKeyID,
+		cfg.FirebasePrivateKey,
+		cfg.FirebaseClientEmail,
+		cfg.FirebaseClientID,
+		cfg.FirebaseAuthURI,
+		cfg.FirebaseTokenURI,
+		cfg.FirebaseAuthProvider,
+		cfg.FirebaseCertURL,
+	)
+	return option.WithCredentialsJSON([]byte(credJSON)), nil
+}
+
 // FirebaseStorage handles Firebase storage operations
 type FirebaseStorage struct {
 	bucket     *storage.BucketHandle
@@ -25,41 +66,9 @@ var firebaseStorage *FirebaseStorage
 func InitFirebase(cfg *config.Config) error {
 	ctx := context.Background()
 
-	var opt option.ClientOption
-
-	// Prefer service account file if path is set
-	if cfg.FirebaseServiceAccountPath != "" {
-		if _, err := os.Stat(cfg.FirebaseServiceAccountPath); err != nil {
-			return fmt.Errorf("service account file not found: %w", err)
-		}
-		fmt.Printf("Using service account file: %s\n", cfg.FirebaseServiceAccountPath)
-		opt = option.WithCredentialsFile(cfg.FirebaseServiceAccountPath)
-	} else {
-		// Fall back to constructing credentials from individual env vars
-		credJSON := fmt.Sprintf(`{
-			"type": "%s",
-			"project_id": "%s",
-			"private_key_id": "%s",
-			"private_key": %s,
-			"client_email": "%s",
-			"client_id": "%s",
-			"auth_uri": "%s",
-			"token_uri": "%s",
-			"auth_provider_x509_cert_url": "%s",
-			"client_x509_cert_url": "%s"
-		}`,
-			cfg.FirebaseType,
-			cfg.FirebaseProjectID,
-			cfg.FirebasePrivateKeyID,
-			cfg.FirebasePrivateKey,
-			cfg.FirebaseClientEmail,
-			cfg.FirebaseClientID,
-			cfg.FirebaseAuthURI,
-			cfg.FirebaseTokenURI,
-			cfg.FirebaseAuthProvider,
-			cfg.FirebaseCertURL,
-		)
-		opt = option.WithCredentialsJSON([]byte(credJSON))
+	opt, err := FirebaseCredentialOption(cfg)
+	if err != nil {
+		return err
 	}
 
 	// Create storage client

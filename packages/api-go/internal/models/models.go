@@ -50,14 +50,24 @@ type RefreshToken struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// Notification represents a user notification
+// Notification represents a user notification. Type tells the app what to do
+// with it — NEW_BOOK opens the reader on BookID; SYSTEM is plain text.
 type Notification struct {
 	ID        int       `json:"id"`
 	UserID    string    `json:"user_id"`
+	Type      string    `json:"type"`
+	Title     *string   `json:"title"`
 	Message   string    `json:"message"`
+	BookID    *string   `json:"book_id"`
 	IsRead    bool      `json:"is_read"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+// Notification types the mobile app understands.
+const (
+	NotificationTypeSystem  = "SYSTEM"
+	NotificationTypeNewBook = "NEW_BOOK"
+)
 
 // Preference represents a genre/subgenre preference
 type Preference struct {
@@ -126,6 +136,19 @@ type Room struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// RoomSummary is a room as the Home/Rooms lists need it — enough of what it's
+// reading to draw the card (cover, title) without the full Room Detail payload.
+type RoomSummary struct {
+	Room
+	CurrentBookID   *string      `json:"current_book_id,omitempty"`
+	CurrentBucketID *string      `json:"current_bucket_id,omitempty"`
+	CurrentBook     *BookPreview `json:"current_book,omitempty"`
+	// Members carry their progress in CurrentBook, so the card can draw its
+	// avatars and group track without a second call per room.
+	Members          []RoomMemberDetail `json:"members"`
+	GroupProgressPct int                `json:"group_progress_pct"`
+}
+
 // RoomBook represents a book in a reading room
 type RoomBook struct {
 	ID        string    `json:"id"`
@@ -151,6 +174,9 @@ type RoomMemberDetail struct {
 	Username string    `json:"username"`
 	Role     string    `json:"role"`
 	JoinedAt time.Time `json:"joined_at"`
+	// Progress through the room's current book; 0 when none is chosen or the
+	// member hasn't opened it.
+	ProgressPct int `json:"progress_pct"`
 }
 
 // RoomBucket is the reading list a room is working through. Buckets live in
@@ -169,6 +195,8 @@ type RoomDetail struct {
 	CurrentBook *BookPreview       `json:"current_book,omitempty"`
 	Bucket      *RoomBucket        `json:"bucket,omitempty"`
 	Members     []RoomMemberDetail `json:"members"`
+	// Average of the members' progress through the current book.
+	GroupProgressPct int `json:"group_progress_pct"`
 }
 
 // ReadingProgress is one reader's place in one book. Progress is personal and
@@ -185,6 +213,13 @@ type ReadingProgress struct {
 	FurthestPage int       `json:"furthest_page"`
 	ProgressPct  int       `json:"progress_pct"`
 	LastReadAt   time.Time `json:"last_read_at"`
+}
+
+// MyBookProgress is one of my own positions with enough of the book to put it
+// on a shelf — what a fresh device rebuilds the Reading tab from.
+type MyBookProgress struct {
+	ReadingProgress
+	Book BookPreview `json:"book"`
 }
 
 // MemberProgress is one member on a room's pace track. A member who hasn't

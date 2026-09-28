@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -130,9 +131,12 @@ func (h *RoomHandler) GetMyRooms(w http.ResponseWriter, r *http.Request) {
 	var err error
 	rows, err = database.DB.Query(
 		`
-			SELECT id, name, description, invite_code, is_private, admin_id, created_at 
-			FROM rooms 
-			WHERE admin_id = $1 OR id IN (SELECT room_id FROM room_members WHERE user_id = $1)`,
+			SELECT r.id, r.name, r.description, r.invite_code, r.is_private, r.admin_id, r.created_at, r.updated_at,
+			       r.current_book_id, r.current_bucket_id,
+			       b.book_id, b.title, b.cover_image_url, b.manuscript_url
+			FROM rooms r
+			LEFT JOIN books b ON b.book_id = r.current_book_id
+			WHERE r.admin_id = $1 OR r.id IN (SELECT room_id FROM room_members WHERE user_id = $1)`,
 		userID,
 	)
 	if err != nil {
@@ -141,20 +145,49 @@ func (h *RoomHandler) GetMyRooms(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	rooms := []models.Room{}
+	rooms := []models.RoomSummary{}
 
 	for rows.Next() {
-		var room models.Room
-		err := rows.Scan(&room.ID, &room.Name, &room.Description, &room.InviteCode, &room.IsPrivate, &room.AdminID, &room.CreatedAt)
+		var room models.RoomSummary
+		var bookID, bookTitle sql.NullString
+		var coverURL, manuscriptURL *string
+		err := rows.Scan(
+			&room.ID, &room.Name, &room.Description, &room.InviteCode, &room.IsPrivate, &room.AdminID, &room.CreatedAt, &room.UpdatedAt,
+			&room.CurrentBookID, &room.CurrentBucketID,
+			&bookID, &bookTitle, &coverURL, &manuscriptURL,
+		)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to get room"}`, http.StatusInternalServerError)
 			return
+		}
+		if bookID.Valid {
+			room.CurrentBook = &models.BookPreview{
+				BookID:        bookID.String,
+				Title:         bookTitle.String,
+				CoverImageURL: coverURL,
+				ManuscriptURL: manuscriptURL,
+			}
 		}
 		rooms = append(rooms, room)
 	}
 	if err := rows.Err(); err != nil {
 		http.Error(w, `{"error": "Failed to get rooms"}`, http.StatusInternalServerError)
 		return
+	}
+	rows.Close()
+
+	for i := range rooms {
+		var bookID sql.NullString
+		if rooms[i].CurrentBookID != nil {
+			bookID = sql.NullString{String: *rooms[i].CurrentBookID, Valid: true}
+		}
+		members, groupPct, err := loadRoomMembers(rooms[i].ID, bookID)
+		if err != nil {
+			http.Error(w, `{"error": "Failed to get room members"}`, http.StatusInternalServerError)
+			return
+		}
+		rooms[i].Members = members
+		rooms[i].GroupProgressPct = groupPct
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -221,6 +254,51 @@ func loadRoomBucket(bucketID, bucketType string) (*models.RoomBucket, error) {
 	return &bucket, rows.Err()
 }
 
+// loadRoomMembers reads a room's members with each one's progress through the
+// room's current book, and the group's average. LEFT JOIN, so a member who
+// hasn't opened the book still counts — at 0 — rather than inflating the
+// average by dropping out of it. Ordered like GetRoomProgress.
+func loadRoomMembers(roomID string, currentBookID sql.NullString) ([]models.RoomMemberDetail, int, error) {
+	rows, err := database.DB.Query(
+		`SELECT m.user_id, u.username, m.role, m.joined_at,
+		        COALESCE(p.current_page, 0), COALESCE(p.total_pages, 0)
+		   FROM room_members m
+		   JOIN users u ON u.uuid = m.user_id
+		   LEFT JOIN reading_progress p ON p.user_id = m.user_id AND p.book_id = $2
+		  WHERE m.room_id = $1
+		  ORDER BY (m.role = 'admin') DESC, m.joined_at`,
+		roomID, currentBookID,
+	)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	members := []models.RoomMemberDetail{}
+	total := 0
+	for rows.Next() {
+		var m models.RoomMemberDetail
+		var currentPage, totalPages int
+		if err := rows.Scan(&m.UserID, &m.Username, &m.Role, &m.JoinedAt, &currentPage, &totalPages); err != nil {
+			return nil, 0, err
+		}
+		if currentBookID.Valid {
+			m.ProgressPct = progressPct(currentPage, totalPages)
+		}
+		total += m.ProgressPct
+		members = append(members, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	groupPct := 0
+	if len(members) > 0 {
+		groupPct = int(math.Round(float64(total) / float64(len(members))))
+	}
+	return members, groupPct, nil
+}
+
 // GetRoomDetail — GET /room/{id}
 // The whole Room Detail screen in one call: the room, what it's reading
 // (standalone book, or a current book from a bucket), and its members.
@@ -285,33 +363,13 @@ func (h *RoomHandler) GetRoomDetail(w http.ResponseWriter, r *http.Request) {
 		detail.Bucket = bucket
 	}
 
-	rows, err := database.DB.Query(
-		`SELECT m.user_id, u.username, m.role, m.joined_at
-		   FROM room_members m
-		   JOIN users u ON u.uuid = m.user_id
-		  WHERE m.room_id = $1
-		  ORDER BY (m.role = 'admin') DESC, m.joined_at`,
-		roomID,
-	)
+	members, groupPct, err := loadRoomMembers(roomID, currentBookID)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to get room members"}`, http.StatusInternalServerError)
 		return
 	}
-	defer rows.Close()
-
-	detail.Members = []models.RoomMemberDetail{}
-	for rows.Next() {
-		var m models.RoomMemberDetail
-		if err := rows.Scan(&m.UserID, &m.Username, &m.Role, &m.JoinedAt); err != nil {
-			http.Error(w, `{"error": "Failed to scan room member"}`, http.StatusInternalServerError)
-			return
-		}
-		detail.Members = append(detail.Members, m)
-	}
-	if err := rows.Err(); err != nil {
-		http.Error(w, `{"error": "Failed to get room members"}`, http.StatusInternalServerError)
-		return
-	}
+	detail.Members = members
+	detail.GroupProgressPct = groupPct
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

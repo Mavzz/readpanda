@@ -115,6 +115,55 @@ func (h *ProgressHandler) PutMyProgress(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(stored)
 }
 
+// GetMyProgress — GET /progress
+//
+// Every book the reader has a position in, most recently read first. Local
+// storage is what a device renders; this is how a second device (or a
+// reinstall) finds out what the reader was already in the middle of.
+func (h *ProgressHandler) GetMyProgress(w http.ResponseWriter, r *http.Request) {
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	if !ok {
+		return
+	}
+
+	rows, err := database.DB.Query(
+		`SELECT p.user_id, p.book_id, p.current_page, p.total_pages, p.furthest_page, p.last_read_at,
+		        b.book_id, b.title, b.cover_image_url, b.manuscript_url
+		   FROM reading_progress p
+		   JOIN books b ON b.book_id = p.book_id
+		  WHERE p.user_id = $1
+		  ORDER BY p.last_read_at DESC`,
+		userID,
+	)
+	if err != nil {
+		http.Error(w, `{"error": "Failed to get reading progress"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	progress := []models.MyBookProgress{}
+	for rows.Next() {
+		var p models.MyBookProgress
+		if err := rows.Scan(
+			&p.UserID, &p.BookID, &p.CurrentPage, &p.TotalPages, &p.FurthestPage, &p.LastReadAt,
+			&p.Book.BookID, &p.Book.Title, &p.Book.CoverImageURL, &p.Book.ManuscriptURL,
+		); err != nil {
+			http.Error(w, `{"error": "Failed to scan reading progress"}`, http.StatusInternalServerError)
+			return
+		}
+		p.ProgressPct = progressPct(p.CurrentPage, p.TotalPages)
+		progress = append(progress, p)
+	}
+	if err := rows.Err(); err != nil {
+		http.Error(w, `{"error": "Failed to get reading progress"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(progress)
+}
+
 // GetRoomProgress — GET /room/{id}/progress
 //
 // The pace track for what the room is currently reading: every member of the
