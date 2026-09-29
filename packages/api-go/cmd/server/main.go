@@ -44,6 +44,7 @@ func main() {
 	roomHandler := handlers.NewRoomHandler(cfg)
 	progressHandler := handlers.NewProgressHandler(cfg)
 	commentHandler := handlers.NewCommentHandler(cfg)
+	highlightHandler := handlers.NewHighlightHandler(cfg)
 	adminHandler := handlers.NewAdminHandler(cfg)
 
 	// Create router
@@ -141,6 +142,13 @@ func main() {
 	router.HandleFunc(apiPrefix+"/room/{id}/book/{bookId}/comments/read", commentHandler.MarkRead).Methods("POST", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/comments/{commentId}/like", commentHandler.LikeComment).Methods("POST", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/comments/{commentId}/like", commentHandler.UnlikeComment).Methods("DELETE", "OPTIONS")
+
+	// Highlight routes
+	// Personal: keyed on the reader and the book, never a room, and only ever
+	// returned to their author. See internal/handlers/highlights.go.
+	router.HandleFunc(apiPrefix+"/books/{bookId}/highlights", highlightHandler.GetBookHighlights).Methods("GET", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/books/{bookId}/highlights", highlightHandler.CreateHighlight).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/highlights/{highlightId}", highlightHandler.DeleteHighlight).Methods("DELETE", "OPTIONS")
 
 	// Admin data browser (portal only, admin role required)
 	// Generic view over every table in the public schema; see internal/handlers/admin.go.

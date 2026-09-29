@@ -182,6 +182,21 @@ actually opened and declines to draw anchors from a different edition.
 
 ---
 
+## Highlights
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| GET | `/books/{bookId}/highlights` | Yes | The caller's own highlights on one book, ordered by page. Returns an array of `{ id, book_id, page, anchor_text, anchor_bounds, file_hash, client_id, created_at }`; `[]` when there are none. |
+| POST | `/books/{bookId}/highlights` | Yes | Create a highlight. Body: `{ page, anchor_text, anchor_bounds, file_hash, client_id }`. `page` is 0-based and `anchor_text` is required (trimmed, capped at 1000 chars). Idempotent on `client_id`: a retry returns the first row. `201`; `400` empty text or negative page; `404` unknown book. |
+| DELETE | `/highlights/{highlightId}` | Yes | Delete one of the caller's highlights. `204`; `404` if it doesn't exist or belongs to someone else. |
+
+Highlights are **personal**: they key on the reader and the book, never a
+room, and are only returned to their author. The anchor has the same shape as a
+comment's, so the reader draws both the same way. Schema:
+`scripts/migrate_book_highlights.sql`.
+
+---
+
 ## Middleware
 
 All routes have the following middleware applied:

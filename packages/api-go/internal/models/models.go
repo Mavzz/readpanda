@@ -347,3 +347,17 @@ type GoogleAuthPayload struct {
 	Sub     string `json:"sub"`
 	Picture string `json:"picture"`
 }
+
+// BookHighlight is a passage one reader marked for themselves. Private: it
+// belongs to the reader and the book, never to a room, and is only ever
+// returned to its author.
+type BookHighlight struct {
+	ID           string          `json:"id"`
+	BookID       string          `json:"book_id"`
+	Page         int             `json:"page"`
+	AnchorText   string          `json:"anchor_text"`
+	AnchorBounds json.RawMessage `json:"anchor_bounds,omitempty"`
+	FileHash     string          `json:"file_hash"`
+	ClientID     string          `json:"client_id,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+}
