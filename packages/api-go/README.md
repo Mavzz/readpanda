@@ -1,192 +1,173 @@
 # ReadPanda Go API
 
-This is the Go backend API for the ReadPanda application, converted from the original Node.js implementation.
+The backend for the ReadPanda mobile app and the writer portal. A single Go
+service (`cmd/server`) on PostgreSQL, with book files in S3-compatible object
+storage (Cloudflare R2 in production, MinIO locally) and push notifications
+through Firebase Cloud Messaging.
 
-## Features
+| | Local | Production |
+|---|---|---|
+| API | `go run` on your Mac, port 3000 | Google Cloud Run, `asia-south1` |
+| Database | PostgreSQL (Docker or Homebrew) | Supabase, session pooler |
+| Files | MinIO (Docker) or the shared R2 bucket | Cloudflare R2 |
+| Push | Optional | Firebase service account from Secret Manager |
 
-- User authentication (email/password and Google OAuth)
-- JWT-based session management
-- PostgreSQL database integration
-- Firebase Storage for file uploads
-- Book publishing and management
-- User preferences and notifications
-- CORS and logging middleware
+- Every route: [ROUTES.md](ROUTES.md)
+- Deploying and operating production: [DEPLOYMENT.md](DEPLOYMENT.md)
+- The mobile app: [readpanda-mobile](https://github.com/Mavzz/readpanda-mobile), setup in its `docs/RUN.md`
 
-## Prerequisites
+## Run it locally
 
-- Go 1.21 or later
-- PostgreSQL database
-- Firebase project with Storage enabled
-- Google OAuth credentials (optional, for Google login)
+### 1. Prerequisites
 
-## Installation
+- Go 1.24+ (`brew install go`)
+- PostgreSQL client tools, for `psql` (`brew install libpq`, or a full `brew install postgresql`)
+- Docker, if you want Postgres and MinIO in containers
 
-1. Navigate to the api-go directory:
+### 2. Start Postgres (and MinIO)
+
+The compose file in `packages/api` runs both, with credentials that match
+`.env.local.example`:
+
 ```bash
-cd packages/api-go
+cd ../api && docker compose up -d postgres minio
 ```
 
-2. Install dependencies:
+This gives you Postgres at `localhost:5432` (user `readpanda`, password
+`readpandapostgres`, database `ReadPanda`) and MinIO at `localhost:9000`, with
+its console at http://localhost:9001 (`minioadmin` / `minioadmin`). In the
+console, create a bucket named `readpanda-books` and set its access policy to
+public, so the app can load covers and manuscripts from it.
+
+A Homebrew Postgres works too; put its user, password and database in
+`.env.local` instead.
+
+### 3. Create the schema
+
+`scripts/readpanda_schema.sql` is the complete, current schema. Run it, then
+the two seed files, in this order:
+
 ```bash
-go mod download
+export PGPASSWORD=readpandapostgres
+psql -h localhost -U readpanda -d ReadPanda -v ON_ERROR_STOP=1 -f scripts/readpanda_schema.sql
+psql -h localhost -U readpanda -d ReadPanda -v ON_ERROR_STOP=1 -f scripts/readpanda_seed_preferences.sql
+psql -h localhost -U readpanda -d ReadPanda -v ON_ERROR_STOP=1 -f scripts/readpanda_seed_books.sql   # optional
 ```
 
-## Configuration
+- `readpanda_seed_preferences.sql` holds the genre and subgenre list. Without
+  it the onboarding interest picker is empty.
+- `readpanda_seed_books.sql` adds six sample books and two "Our Picks"
+  collections. Their files live in the production R2 bucket, so they only open
+  when your `R2_*` settings point there. With a local MinIO, skip it and upload
+  books through the portal or `POST /books/upload` instead.
+- The `migrate_*.sql` files and `init.sql` are the history of how the schema
+  got here. They are already folded into `readpanda_schema.sql`; don't run
+  them on a new database.
 
-Create a `.env.local` file in the `packages/api-go` directory with the following variables:
+### 4. Configure
 
-```env
-# Server Configuration
-PORT=3000
-API_VERSION=/api/v1
-
-# PostgreSQL Database
-PG_USER=your_db_user
-PG_HOST=localhost
-PG_DB=your_db_name
-PG_PASSWORD=your_db_password
-PG_PORT=5432
-
-# JWT
-JWT_SECRET=your_super_secret_jwt_key
-JWT_REFRESH_SECRET=your_refresh_secret_key
-
-# Crypto (for frontend password encryption)
-CRYPTO_SECRET=your_crypto_secret
-
-# Google OAuth
-GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
-
-# Firebase
-FIREBASE_TYPE=service_account
-FIREBASE_PROJECT_ID=your_project_id
-FIREBASE_PRIVATE_KEY_ID=your_private_key_id
-FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
-FIREBASE_CLIENT_EMAIL=your_service_account@project.iam.gserviceaccount.com
-FIREBASE_CLIENT_ID=your_client_id
-FIREBASE_AUTH_URI=https://accounts.google.com/o/oauth2/auth
-FIREBASE_TOKEN_URI=https://oauth2.googleapis.com/token
-FIREBASE_AUTH_PROVIDER=https://www.googleapis.com/oauth2/v1/certs
-FIREBASE_CERT_URL=https://www.googleapis.com/robot/v1/metadata/x509/your_service_account%40project.iam.gserviceaccount.com
-FIREBASE_STORAGE_BUCKET=your_project.appspot.com
-```
-
-## TLS/HTTPS Setup (Optional)
-
-If you want to run the server with HTTPS, place `cert.pem` and `key.pem` files in the `packages/api-go` directory. The server will automatically use them if found.
-
-To generate self-signed certificates for development:
 ```bash
-openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
+cp .env.local.example .env.local
 ```
 
-## Running the Server
+The defaults work against the Docker setup above. The server refuses to start
+without `JWT_SECRET` and `JWT_REFRESH_SECRET`; any string will do locally.
 
-### Development
+Ask a maintainer for the values you can't make yourself:
+
+- `GOOGLE_CLIENT_ID` / `GOOGLE_IOS_CLIENT_ID`: needed for Google sign-in. Email
+  sign-up works without them.
+- `serviceAccountKey.json` plus `FIREBASE_SERVICE_ACCOUNT_PATH=./serviceAccountKey.json`:
+  needed for push. Without it the server logs `Push notifications disabled`
+  and everything else works.
+
+`.env.local`, `serviceAccountKey.json` and `env.yaml` are gitignored. Never
+commit them.
+
+### 5. Run
+
 ```bash
-go run cmd/server/main.go
+go run ./cmd/server
 ```
 
-### Production Build
+A healthy start logs:
+
+```
+Connecting to database ReadPanda at localhost:5432 (sslmode=disable)
+Connected to PostgreSQL
+Object storage (R2/MinIO) initialised — endpoint: http://localhost:9000, bucket: readpanda-books
+App running on 0.0.0.0:3000 HTTP and port 3000...
+```
+
+Check it responds (a 401 is correct: the route needs a login):
+
 ```bash
-go build -o api-go cmd/server/main.go
-./api-go
+curl -i http://localhost:3000/api/v1/genres
 ```
 
-## API Endpoints
+The iOS Simulator shares your Mac's network, so a simulator build of the app
+reaches this server at `localhost:3000`. See the mobile repo's `docs/RUN.md`.
 
-### Authentication
-- `POST /api/v1/signup` - Create a new user
-- `POST /api/v1/auth/login` - Login with email/password
-- `POST /api/v1/auth/google` - Login with Google OAuth
-- `POST /api/v1/auth/logout` - Logout user
-- `GET /api/v1/token/refresh` - Refresh access token
-
-### Users
-- `GET /api/v1/users` - Get all users
-
-### Books
-- `POST /api/v1/books/upload` - Upload a book with cover and manuscript
-- `GET /api/v1/books` - Get books for authenticated user
-- `GET /api/v1/books/all` - Get all books
-
-### Preferences
-- `GET /api/v1/user/preferences` - Get user preferences
-- `POST /api/v1/user/preferences` - Update user preferences
-- `GET /api/v1/genres` - Get all genres
-- `GET /api/v1/subgenres` - Get all subgenres
-
-### Notifications
-- `GET /api/v1/notifications` - Get user notifications
-- `GET /api/v1/notifications/unread/count` - Get unread notification count
-- `PUT /api/v1/notifications/{id}/read` - Mark a notification read
-- `POST /api/v1/users/me/devices` - Register an FCM token for push
-- `DELETE /api/v1/users/me/devices/{token}` - Unregister a device
-
-## Project Structure
+## Working on the code
 
 ```
-packages/api-go/
-├── cmd/
-│   └── server/
-│       └── main.go           # Application entry point
-├── internal/
-│   ├── config/
-│   │   └── config.go         # Configuration management
-│   ├── database/
-│   │   └── database.go       # Database connection
-│   ├── handlers/
-│   │   ├── users.go          # User authentication handlers
-│   │   ├── books.go          # Book management handlers
-│   │   ├── preferences.go    # User preferences handlers
-│   │   └── notifications.go  # Notification handlers
-│   ├── middleware/
-│   │   └── middleware.go     # HTTP middleware (CORS, logging, auth)
-│   ├── models/
-│   │   └── models.go         # Data models
-│   └── utils/
-│       ├── utils.go          # Utility functions (JWT, crypto)
-│       └── firebase.go       # Firebase storage integration
-├── go.mod                    # Go module definition
-└── README.md                 # This file
+cmd/server/main.go     Entry point: config, connections, every route
+internal/config        Environment variables (.env.local locally)
+internal/database      PostgreSQL connection
+internal/handlers      One file per area: users, books, rooms, comments, ...
+internal/middleware    CORS, request logging, auth
+internal/models        Request and response types
+internal/notify        Inbox writes and push fan-out
+internal/utils         JWT, passwords, R2, Firebase, FCM
+scripts/               Schema, seeds and migration history
 ```
 
-## Differences from Node.js Version
+Before you push:
 
-1. **Type Safety**: Go provides compile-time type checking
-2. **Performance**: Generally faster execution and lower memory usage
-3. **Concurrency**: Built-in goroutines for handling concurrent requests
-4. **Error Handling**: Explicit error handling instead of try-catch
-5. **Compilation**: Compiled binary instead of interpreted code
-
-## Migration Notes
-
-All major features from the Node.js API have been ported:
-- ✅ User authentication (email/password)
-- ✅ Google OAuth integration
-- ✅ JWT token management
-- ✅ PostgreSQL database operations
-- ✅ Firebase Storage integration
-- ✅ Book upload and management
-- ✅ User preferences
-- ✅ Notifications, with FCM push (run `scripts/migrate_notifications_push.sql`; see ROUTES.md)
-- ✅ CORS middleware
-- ✅ Request logging
-
-## Testing
-
-To test the API endpoints, you can use tools like:
-- cURL
-- Postman
-- Thunder Client (VS Code extension)
-
-Example:
 ```bash
-curl -X POST http://localhost:3000/api/v1/signup \
-  -H "Content-Type: application/json" \
-  -d '{"username":"test","email":"test@example.com","password":"encrypted_password"}'
+gofmt -l .        # should print nothing
+go vet ./...
+go build ./...
 ```
 
-## License
+### Changing the schema
 
-MIT
+1. Write the change as a new, re-runnable `scripts/migrate_<what>.sql` (use
+   `IF NOT EXISTS` and similar guards).
+2. Run it on your local database, and on Supabase before deploying code that
+   depends on it (see [DEPLOYMENT.md](DEPLOYMENT.md#schema-changes)).
+3. Regenerate the full schema so new databases get the change:
+   ```bash
+   pg_dump -h localhost -U readpanda -d ReadPanda --schema-only --no-owner --no-privileges -n public \
+     -f scripts/readpanda_schema.sql
+   ```
+   Then remove the `\restrict`/`\unrestrict` lines, `CREATE SCHEMA public`,
+   its `COMMENT`, and `SET transaction_timeout`, and re-add the row-level
+   security block from the end of the current file. The Supabase SQL Editor
+   and older Postgres versions reject the first four.
+
+### Errors and logs
+
+The request logger prints one line per request with its status and duration.
+When a handler returns a 5xx, the line starts with `ERROR` and includes the
+error message the handler sent to the client:
+
+```
+POST /api/v1/auth/google -> 201 (275ms)
+ERROR POST /api/v1/auth/google -> 500 (17ms): {"error": "pq: column \"id\" does not exist"}
+```
+
+So you don't need to add logging for a failure to be visible. Return it with
+`http.Error` as the handlers already do.
+
+### Things that will bite you
+
+- **Admin-only routes check the role themselves.** There is no router-level
+  admin gate. Call `utils.RequireAdmin` at the top of the handler, as
+  `GetUsers` and the `/admin/*` handlers do.
+- **`users` has no `id` column.** Its key is `uuid`. `models.User.ID` exists
+  but is never filled from the database.
+- **`PG_SSLMODE`** defaults to `disable`. Hosted Postgres (Supabase) needs
+  `require`.
+- **`CRYPTO_SECRET`** is in the env templates but nothing reads it. Passwords
+  are bcrypt-hashed on the server.
