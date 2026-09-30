@@ -24,9 +24,6 @@ type Config struct {
 	JWTSecret        string
 	JWTRefreshSecret string
 
-	// Crypto
-	CryptoSecret string
-
 	// Google OAuth
 	GoogleClientID    string
 	GoogleIOSClientID string
@@ -60,6 +57,15 @@ func Load() *Config {
 		log.Println("No .env.local file found, using environment variables")
 	}
 
+	jwtSecret := getEnv("JWT_SECRET", "")
+	jwtRefreshSecret := getEnv("JWT_REFRESH_SECRET", "")
+	if jwtSecret == "" || jwtRefreshSecret == "" {
+		// Silently falling back to an empty-string HMAC key would mean every
+		// token is signed/verified with a well-known secret — fail loudly
+		// instead of booting into a broken-but-running state.
+		log.Fatal("JWT_SECRET and JWT_REFRESH_SECRET must both be set")
+	}
+
 	return &Config{
 		Port:       getEnv("PORT", "3000"),
 		APIVersion: getEnv("API_VERSION", "/api/v1"),
@@ -70,9 +76,8 @@ func Load() *Config {
 		DBPassword: getEnv("PG_PASSWORD", ""),
 		DBPort:     getEnv("PG_PORT", "5432"),
 
-		JWTSecret:        getEnv("JWT_SECRET", ""),
-		JWTRefreshSecret: getEnv("JWT_REFRESH_SECRET", ""),
-		CryptoSecret:     getEnv("CRYPTO_SECRET", ""),
+		JWTSecret:        jwtSecret,
+		JWTRefreshSecret: jwtRefreshSecret,
 
 		GoogleClientID:    getEnv("GOOGLE_CLIENT_ID", ""),
 		GoogleIOSClientID: getEnv("GOOGLE_IOS_CLIENT_ID", ""),

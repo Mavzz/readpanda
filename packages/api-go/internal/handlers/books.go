@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/Mavzz/readpanda/api-go/internal/config"
 	"github.com/Mavzz/readpanda/api-go/internal/database"
 	"github.com/Mavzz/readpanda/api-go/internal/models"
+	"github.com/Mavzz/readpanda/api-go/internal/notify"
 	"github.com/Mavzz/readpanda/api-go/internal/utils"
 	"github.com/google/uuid"
 )
@@ -117,6 +119,24 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
+	}
+
+	// Tell every other reader. Only once there is a manuscript: a NEW_BOOK
+	// notification opens the reader, and a cover alone has nothing to open.
+	// A failure here costs the announcement, not the upload.
+	if manuscriptLink != nil {
+		displayTitle := strings.TrimSpace(title)
+		if displayTitle == "" {
+			displayTitle = "A new book"
+		}
+		if err := notify.ToAllUsersExcept(claims.UserID, notify.Notification{
+			Type:    models.NotificationTypeNewBook,
+			Title:   "New book added",
+			Message: displayTitle + " is ready to read.",
+			BookID:  bookID,
+		}); err != nil {
+			log.Printf("books: failed to announce %s: %v", bookID, err)
+		}
 	}
 
 	response := map[string]string{

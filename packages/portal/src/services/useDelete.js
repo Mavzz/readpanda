@@ -1,12 +1,14 @@
-export const useDelete = async (url, headers = {}, signal = null) => {
+export const useDelete = async (url, headers = {}, signal = null, body = null) => {
 
   const response = await fetch(url, {
       method: "DELETE",
       headers: {
         "Accept": "application/json",
         "X-Application-Type": "portal",
+        ...(body ? { "Content-Type": "application/json" } : {}),
         ...headers,
       },
+      ...(body ? { body: JSON.stringify(body) } : {}),
       signal: signal,
     });
 
