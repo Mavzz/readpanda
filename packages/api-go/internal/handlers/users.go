@@ -25,9 +25,13 @@ func NewUserHandler(cfg *config.Config) *UserHandler {
 	return &UserHandler{Config: cfg}
 }
 
-// GetUsers retrieves all users
+// GetUsers retrieves all users. Admin-only: it lists every account's email.
 func (h *UserHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
-	rows, err := database.DB.Query("SELECT id, username, email, isactive, login_type, uuid, created_at FROM users")
+	if _, ok := utils.RequireAdmin(w, r, h.Config.JWTSecret); !ok {
+		return
+	}
+
+	rows, err := database.DB.Query("SELECT username, email, isactive, login_type, uuid, created_at FROM users")
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -37,7 +41,7 @@ func (h *UserHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
 	users := []models.User{}
 	for rows.Next() {
 		var user models.User
-		err := rows.Scan(&user.ID, &user.Username, &user.Email, &user.IsActive, &user.LoginType, &user.UUID, &user.CreatedAt)
+		err := rows.Scan(&user.Username, &user.Email, &user.IsActive, &user.LoginType, &user.UUID, &user.CreatedAt)
 		if err != nil {
 			http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 			return
@@ -295,9 +299,9 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 	username := name
 	for attempt := 0; ; attempt++ {
 		err = tx.QueryRow(
-			"INSERT INTO users (username, email, isactive, login_type, uuid, google_sub) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, username",
+			"INSERT INTO users (username, email, isactive, login_type, uuid, google_sub) VALUES ($1, $2, $3, $4, $5, $6) RETURNING username",
 			username, email, true, models.LoginTypeSocialGoogle, newUserUID, sub,
-		).Scan(&user.ID, &user.Username)
+		).Scan(&user.Username)
 		if err == nil {
 			break
 		}
