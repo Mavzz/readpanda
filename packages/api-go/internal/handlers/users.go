@@ -318,7 +318,7 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Initialize user preferences
-	_, err = initializeUserPreferences(tx, newUserUID)
+	preferencesData, err := initializeUserPreferences(tx, newUserUID)
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -344,9 +344,11 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 
 	response := models.TokenResponse{
 		Username:     user.Username,
+		Email:        email,
 		Picture:      picture,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
+		Preferences:  preferencesData,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

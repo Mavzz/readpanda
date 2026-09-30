@@ -333,6 +333,9 @@ type TokenResponse struct {
 	Username     string `json:"username,omitempty"`
 	Email        string `json:"email,omitempty"`
 	Picture      string `json:"picture,omitempty"`
+	// Set on first sign-up, like /signup, so the interest picker has its
+	// options before the app's own preferences fetch returns.
+	Preferences map[string]interface{} `json:"preferences,omitempty"`
 }
 
 // RefreshTokenRequest represents refresh token request
