@@ -19,6 +19,8 @@ type Config struct {
 	DBName     string
 	DBPassword string
 	DBPort     string
+	// Hosted Postgres (Supabase, Neon) needs "require"; local Docker has no TLS.
+	DBSSLMode string
 
 	// JWT
 	JWTSecret        string
@@ -75,6 +77,7 @@ func Load() *Config {
 		DBName:     getEnv("PG_DB", ""),
 		DBPassword: getEnv("PG_PASSWORD", ""),
 		DBPort:     getEnv("PG_PORT", "5432"),
+		DBSSLMode:  getEnv("PG_SSLMODE", "disable"),
 
 		JWTSecret:        jwtSecret,
 		JWTRefreshSecret: jwtRefreshSecret,

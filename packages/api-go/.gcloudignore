@@ -1,0 +1,26 @@
+# What `gcloud run deploy --source .` leaves out of the upload. Without this
+# file gcloud falls back to .gitignore, whose `server` binary pattern also
+# matches the cmd/server/ source directory.
+.gcloudignore
+.git
+.gitignore
+.vscode
+
+# Secrets: supplied by env.yaml and Secret Manager instead
+.env
+.env.local
+env.yaml
+serviceAccountKey.json
+*.pem
+*.key
+*.crt
+
+# Local build output and debug binaries
+/api-go
+/server
+cmd/server/server
+__debug_bin*
+
+# Not needed to build or run the server
+scripts/
+insomnia_collection.json
