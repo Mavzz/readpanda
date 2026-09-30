@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BookIcon, HomeIcon, UploadIcon, LogoutIcon, MenuIcon, SparklesIcon, FolderIcon } from './components/icons';
+import { BookIcon, HomeIcon, UploadIcon, LogoutIcon, MenuIcon, SparklesIcon, FolderIcon, DatabaseIcon, UsersIcon } from './components/icons';
 import LoginPage from './pages/loginPage';
 import DashboardPage from './pages/dashboardPage';
 import MyBooksPage from './pages/myBooksPage';
@@ -7,6 +7,9 @@ import UploadBookPage from './pages/uploadBookPage';
 import MyBucketsPage from './pages/myBucketsPage';
 import SignUpPage from './pages/signUpPage';
 import OurPicksPage from './pages/ourPicksPage';
+import DatabasePage from './pages/databasePage';
+import UsersPage from './pages/usersPage';
+import UserDetailPage from './pages/userDetailPage';
 import { Routes, Route, Link, useNavigate } from 'react-router-dom'; // Import routing components
 
 const mockAvatar = 'https://placehold.co/100x100/E2E8F0/4A5568?text=AD';
@@ -48,6 +51,8 @@ const PortalLayout = ({ onLogout, children }) => {
           <NavLink to="/our-picks" icon={<SparklesIcon />}>Our Picks</NavLink>
           <NavLink to="/my-buckets" icon={<FolderIcon />}>Buckets</NavLink>
           <NavLink to="/upload" icon={<UploadIcon />}>Upload Book</NavLink>
+          <NavLink to="/users" icon={<UsersIcon />}>Users</NavLink>
+          <NavLink to="/database" icon={<DatabaseIcon />}>Database</NavLink>
         </nav>
         <div className="px-4 py-4 border-t border-gray-700">
             <button
@@ -106,6 +111,10 @@ export default function App() {
         <Route path="/our-picks" element={<OurPicksPage />} />
         <Route path="/my-buckets" element={<MyBucketsPage />} />
         <Route path="/upload" element={<UploadBookPage />} />
+        <Route path="/users" element={<UsersPage />} />
+        <Route path="/users/:uuid" element={<UserDetailPage />} />
+        <Route path="/database" element={<DatabasePage />} />
+        <Route path="/database/:table" element={<DatabasePage />} />
         {/* Add a catch-all route for 404 */}
         <Route path="*" element={<div>404 Not Found</div>} />
       </Routes>

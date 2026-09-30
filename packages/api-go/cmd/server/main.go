@@ -29,12 +29,23 @@ func main() {
 		log.Printf("Warning: Failed to initialize object storage: %v", err)
 	}
 
+	// Initialize push (Firebase Cloud Messaging). Optional: without it,
+	// notifications still land in the inbox, they just aren't pushed.
+	if err := utils.InitPush(cfg); err != nil {
+		log.Printf("Warning: Push notifications disabled: %v", err)
+	}
+
 	// Initialize handlers
 	userHandler := handlers.NewUserHandler(cfg)
 	bookHandler := handlers.NewBookHandler(cfg)
 	preferencesHandler := handlers.NewPreferencesHandler(cfg)
 	notificationHandler := handlers.NewNotificationHandler(cfg)
 	bucketHandler := handlers.NewBucketHandler(cfg)
+	roomHandler := handlers.NewRoomHandler(cfg)
+	progressHandler := handlers.NewProgressHandler(cfg)
+	commentHandler := handlers.NewCommentHandler(cfg)
+	highlightHandler := handlers.NewHighlightHandler(cfg)
+	adminHandler := handlers.NewAdminHandler(cfg)
 
 	// Create router
 	router := mux.NewRouter()
@@ -78,6 +89,11 @@ func main() {
 	// Notifications routes
 	router.HandleFunc(apiPrefix+"/notifications", notificationHandler.GetUserNotifications).Methods("GET")
 	router.HandleFunc(apiPrefix+"/notifications/unread/count", notificationHandler.GetUnreadNotificationCount).Methods("GET")
+	router.HandleFunc(apiPrefix+"/notifications/{id}/read", notificationHandler.MarkNotificationRead).Methods("PUT", "OPTIONS")
+
+	// Push device registration — one row per FCM token, owned by the caller.
+	router.HandleFunc(apiPrefix+"/users/me/devices", notificationHandler.RegisterDevice).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/users/me/devices/{token}", notificationHandler.UnregisterDevice).Methods("DELETE", "OPTIONS")
 
 	// User Buckets routes
 	router.HandleFunc(apiPrefix+"/users/me/buckets", bucketHandler.ListUserBuckets).Methods("GET")
@@ -85,6 +101,7 @@ func main() {
 	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}", bucketHandler.UpdateUserBucket).Methods("PUT", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}", bucketHandler.DeleteUserBucket).Methods("DELETE", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}/books", bucketHandler.AddBooksToBucket).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}/books", bucketHandler.GetUserBucketBooks).Methods("GET")
 	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}/books/{bookId}", bucketHandler.RemoveBookFromBucket).Methods("DELETE", "OPTIONS")
 
 	// Curated "Our Picks" routes
@@ -97,6 +114,50 @@ func main() {
 	router.HandleFunc(apiPrefix+"/home/our-picks/{bucketId}/books", bucketHandler.GetOurPicksBucketBooks).Methods("GET")
 	router.HandleFunc(apiPrefix+"/home/our-picks/{bucketId}/books", bucketHandler.AdminAddBooksToCuratedBucket).Methods("POST")
 	router.HandleFunc(apiPrefix+"/home/our-picks/{bucketId}/books/{bookId}", bucketHandler.AdminRemoveBookFromCuratedBucket).Methods("DELETE")
+
+	// Room routes
+	router.HandleFunc(apiPrefix+"/room/create", roomHandler.CreateRoom).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/my-rooms", roomHandler.GetMyRooms).Methods("GET", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/join", roomHandler.JoinRoom).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}", roomHandler.GetRoomDetail).Methods("GET", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}/reading", roomHandler.SetRoomReading).Methods("PATCH", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}", roomHandler.DeleteRoom).Methods("DELETE", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}/members/me", roomHandler.LeaveRoom).Methods("DELETE", "OPTIONS")
+
+	// Reading progress routes
+	// Progress is personal and keys on the book, so it is published once and
+	// read back per room — a reader in three rooms reading the same book has
+	// one position, not three.
+	router.HandleFunc(apiPrefix+"/progress", progressHandler.GetMyProgress).Methods("GET", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/progress/{bookId}", progressHandler.PutMyProgress).Methods("PUT", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}/progress", progressHandler.GetRoomProgress).Methods("GET", "OPTIONS")
+
+	// Comment routes
+	// Comments key on the room AND the book: the same book read in two rooms
+	// is two conversations. What a reader is allowed to see is decided against
+	// their own furthest_page, server-side — everything still ahead of them
+	// comes back as a bare count. See internal/handlers/comments.go.
+	router.HandleFunc(apiPrefix+"/room/{id}/book/{bookId}/comments", commentHandler.GetBookComments).Methods("GET", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}/book/{bookId}/comments", commentHandler.CreateComment).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}/book/{bookId}/comments/read", commentHandler.MarkRead).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/comments/{commentId}/like", commentHandler.LikeComment).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/comments/{commentId}/like", commentHandler.UnlikeComment).Methods("DELETE", "OPTIONS")
+
+	// Highlight routes
+	// Personal: keyed on the reader and the book, never a room, and only ever
+	// returned to their author. See internal/handlers/highlights.go.
+	router.HandleFunc(apiPrefix+"/books/{bookId}/highlights", highlightHandler.GetBookHighlights).Methods("GET", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/books/{bookId}/highlights", highlightHandler.CreateHighlight).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/highlights/{highlightId}", highlightHandler.DeleteHighlight).Methods("DELETE", "OPTIONS")
+
+	// Admin data browser (portal only, admin role required)
+	// Generic view over every table in the public schema; see internal/handlers/admin.go.
+	router.HandleFunc(apiPrefix+"/admin/tables", adminHandler.ListTables).Methods("GET")
+	router.HandleFunc(apiPrefix+"/admin/tables/{table}", adminHandler.GetTableSchema).Methods("GET")
+	router.HandleFunc(apiPrefix+"/admin/tables/{table}/rows", adminHandler.GetTableRows).Methods("GET")
+	router.HandleFunc(apiPrefix+"/admin/tables/{table}/rows", adminHandler.InsertTableRow).Methods("POST")
+	router.HandleFunc(apiPrefix+"/admin/tables/{table}/rows", adminHandler.DeleteTableRow).Methods("DELETE")
+	router.HandleFunc(apiPrefix+"/admin/users/{uuid}", adminHandler.GetUserDetail).Methods("GET")
 
 	// Start server
 	port := cfg.Port

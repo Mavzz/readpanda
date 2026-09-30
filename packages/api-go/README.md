@@ -119,6 +119,9 @@ go build -o api-go cmd/server/main.go
 ### Notifications
 - `GET /api/v1/notifications` - Get user notifications
 - `GET /api/v1/notifications/unread/count` - Get unread notification count
+- `PUT /api/v1/notifications/{id}/read` - Mark a notification read
+- `POST /api/v1/users/me/devices` - Register an FCM token for push
+- `DELETE /api/v1/users/me/devices/{token}` - Unregister a device
 
 ## Project Structure
 
@@ -166,7 +169,7 @@ All major features from the Node.js API have been ported:
 - ✅ Firebase Storage integration
 - ✅ Book upload and management
 - ✅ User preferences
-- ✅ Notifications
+- ✅ Notifications, with FCM push (run `scripts/migrate_notifications_push.sql`; see ROUTES.md)
 - ✅ CORS middleware
 - ✅ Request logging
 
