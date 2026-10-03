@@ -1,0 +1,88 @@
+name: Deploy API to Cloud Run
+
+# Deploys packages/api-go to the readpanda-backend Cloud Run service on every
+# push to main that touches it. See packages/api-go/DEPLOYMENT.md.
+#
+# Only code is deployed. Env vars and the Firebase secret mount are left as
+# they are on the service; change those with
+#   gcloud run services update readpanda-backend --region asia-south1 --env-vars-file env.yaml
+#
+# Auth is Workload Identity Federation (packages/api-go/scripts/setup_github_deploy.sh):
+# no Google key is stored in GitHub, and Google only honours tokens from this
+# repo's main branch, so manual runs of this workflow must also target main.
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "packages/api-go/**"
+      - ".github/workflows/deploy-api.yml"
+  workflow_dispatch:
+
+# One deploy at a time, and never cancel one halfway.
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # lets the job request a GitHub OIDC token for Google
+
+env:
+  PROJECT_ID: reanpanda-d3beb
+  REGION: asia-south1
+  SERVICE: readpanda-backend
+
+jobs:
+  deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: packages/api-go
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: packages/api-go/go.mod
+          cache-dependency-path: packages/api-go/go.sum
+
+      # Fail here, in seconds, rather than minutes into a Cloud Build.
+      - name: Vet and build
+        run: |
+          go vet ./...
+          go build ./...
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/439290157125/locations/global/workloadIdentityPools/github/providers/readpanda-repo
+          service_account: github-deployer@reanpanda-d3beb.iam.gserviceaccount.com
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      # No --env-vars-file, --set-secrets or --allow-unauthenticated: omitted
+      # settings keep their current values on the service.
+      - name: Deploy
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --source . \
+            --set-build-env-vars GOOGLE_BUILDABLE=./cmd/server \
+            --quiet
+
+      # 401 means the new revision is serving and routing works; the route
+      # just needs a login.
+      - name: Smoke test
+        run: |
+          URL=$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$URL/api/v1/genres")
+          echo "GET /api/v1/genres -> $code"
+          test "$code" = "401"

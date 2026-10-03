@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"math"
 	"net/http"
 	"time"
@@ -109,6 +110,19 @@ func (h *ProgressHandler) PutMyProgress(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	stored.ProgressPct = progressPct(stored.CurrentPage, stored.TotalPages)
+
+	// The first reader to open a book is how the catalogue learns its length
+	// (Book detail's "{pages} pages"). Best effort: a failure here leaves the
+	// meta line without a page count, it doesn't fail the save.
+	if stored.TotalPages > 0 {
+		if _, err := database.DB.Exec(
+			`UPDATE books SET page_count = $2, pages_from_lookup = false
+			  WHERE book_id = $1 AND (page_count IS NULL OR pages_from_lookup)`,
+			bookID, stored.TotalPages,
+		); err != nil {
+			log.Printf("Failed to record page count for %s: %v", bookID, err)
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

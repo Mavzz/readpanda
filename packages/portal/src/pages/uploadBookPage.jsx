@@ -1,446 +1,162 @@
-import { useState } from "react";
-import SuggestionModal from "../components/modals";
-import { SparklesIcon } from "../components/icons";
-import { getBackendUrl } from "../utils/Helper";
-import { useFileUpload as UseFileUpload } from "../services/useFileUpload";
+import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { Banner, Button, Card, Cover, Eyebrow, Field, PageHeader } from "../components/ui";
+import { UploadIcon } from "../components/icons";
+import { api } from "../services/api";
+import { BOOKS_KEY } from "../services/queries";
+import { readJSON } from "../utils/session";
+
+const MANUSCRIPT_TYPES = [".pdf", ".epub"];
+const isManuscript = (file) => MANUSCRIPT_TYPES.some((ext) => file.name.toLowerCase().endsWith(ext));
+
+const EMPTY = { title: "", author: "", description: "", genre: "", subgenre: "" };
 
 const UploadBookPage = () => {
-    // Form state
-    const [title, setTitle] = useState("");
-    const [description, setDescription] = useState("");
-    const [genre, setGenre] = useState("");
-    const [subGenre, setSubGenre] = useState(""); // Assuming subgenre is also needed
-    const [coverPreview, setCoverPreview] = useState(null);
-    const [manuscriptName, setManuscriptName] = useState("");
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState(EMPTY);
+  const [coverFile, setCoverFile] = useState(null);
+  const [coverPreview, setCoverPreview] = useState(null);
+  const [manuscript, setManuscript] = useState(null);
+  const [dragging, setDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [notice, setNotice] = useState("");
+  const coverInput = useRef(null);
+  const manuscriptInput = useRef(null);
 
-    // New state for file objects
-    const [coverFile, setCoverFile] = useState(null);
-    const [manuscriptFile, setManuscriptFile] = useState(null);
+  const genres = readJSON("genres", []);
+  const subgenres = readJSON("subgenres", []).filter((s) => s.genre === form.genre);
 
-    // Gemini AI state
-    const [isGenerating, setIsGenerating] = useState({
-        title: false,
-        description: false,
-    });
-    const [showTitleModal, setShowTitleModal] = useState(false);
-    const [titleSuggestions, setTitleSuggestions] = useState([]);
+  // Free the preview's object URL when it's replaced or the page unmounts.
+  useEffect(() => () => { if (coverPreview) URL.revokeObjectURL(coverPreview); }, [coverPreview]);
 
-    // Upload specific state
-    const [isUploading, setIsUploading] = useState(false);
-    const [uploadMessage, setUploadMessage] = useState("");
-    const [uploadError, setUploadError] = useState("");
+  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  // A subgenre only makes sense under the genre it was picked for.
+  const setGenre = (e) => setForm((f) => ({ ...f, genre: e.target.value, subgenre: "" }));
 
-    // Genre options (could be fetched from an API or defined statically)
-    const subgenres = JSON.parse(localStorage.getItem("subgenres"));
-    const genreOptions = localStorage.getItem("genres") ? JSON.parse(localStorage.getItem("genres")) : [];
-    const subgenreOptions = subgenres ? subgenres.filter((option) => option.genre === genre) : [];
+  const pickCover = (file) => {
+    setCoverFile(file ?? null);
+    setCoverPreview(file ? URL.createObjectURL(file) : null);
+  };
 
-    /**
-     * Calls the Gemini API to generate content.
-     * @param {string} prompt The prompt to send to the model.
-     * @returns {Promise<string|null>} The generated text.
-     */
-    const generateWithGemini = async (prompt) => {
-        const apiKey = ""; // This will be provided by the runtime environment
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  const pickManuscript = (file) => {
+    if (file && !isManuscript(file)) {
+      setNotice("The manuscript has to be a PDF or EPUB.");
+      return;
+    }
+    setManuscript(file ?? null);
+  };
 
-        try {
-            const response = await fetch(apiUrl, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
-            });
-            if (!response.ok) {
-                throw new Error(`API call failed with status: ${response.status}`);
-            }
-            const result = await response.json();
-            return result.candidates?.[0]?.content?.parts?.[0]?.text || null;
-        } catch (error) {
-            console.error("Gemini API call error:", error);
-            alert("An error occurred while generating content. Please try again.");
-            return null;
-        }
-    };
+  const onDrop = (e) => {
+    e.preventDefault();
+    setDragging(false);
+    pickManuscript(e.dataTransfer.files?.[0]);
+  };
 
-    const handleGenerateTitles = async () => {
-        if (!description) {
-            alert("Please write a description first to generate title ideas.");
-            return;
-        }
-        setShowTitleModal(true);
-        setIsGenerating((prev) => ({ ...prev, title: true }));
-        setTitleSuggestions([]);
+  const missing = [
+    !form.title.trim() && "a title",
+    !form.description.trim() && "a description",
+    !form.genre && "a genre",
+    !manuscript && "a manuscript",
+  ].filter(Boolean);
+  const ready = missing.length === 0 && !uploading;
 
-        const prompt = `Based on the following book description and genre, generate a list of 5 creative and catchy book titles. Format the output as a simple list separated by newlines.\n\nGenre: ${genre}\n\nDescription: "${description}"`;
-        const result = await generateWithGemini(prompt);
+  const publish = async (e) => {
+    e.preventDefault();
+    if (!ready) return;
+    setNotice("");
+    setUploading(true);
+    try {
+      const data = new FormData();
+      data.append("title", form.title.trim());
+      data.append("author_name", form.author.trim());
+      data.append("description", form.description.trim());
+      data.append("genre", form.genre);
+      data.append("subgenre", form.subgenre);
+      data.append("manuscript", manuscript);
+      if (coverFile) data.append("cover", coverFile);
 
-        if (result) {
-            setTitleSuggestions(result.split("\n").filter((t) => t.trim() !== ""));
-        }
-        setIsGenerating((prev) => ({ ...prev, title: false }));
-    };
+      await api.upload("/books/upload", data);
+      queryClient.invalidateQueries({ queryKey: BOOKS_KEY });
+      setNotice(`"${form.title.trim()}" is published. Readers get a notification.`);
+      setForm(EMPTY);
+      pickCover(null);
+      setManuscript(null);
+    } catch (err) {
+      setNotice(`Couldn't publish the book: ${err.message}`);
+    } finally {
+      setUploading(false);
+    }
+  };
 
-    const handleGenerateDescription = async () => {
-        if (!title) {
-            alert("Please enter a title first to generate a description.");
-            return;
-        }
-        setIsGenerating((prev) => ({ ...prev, description: true }));
+  return (
+    <>
+      <PageHeader title="Upload book" subtitle="Published books show up for every reader right away" />
 
-        const prompt = `Based on the following book title and genre, write a compelling, professional book description of about 150 words. Do not include the title in the description text itself.\n\nTitle: "${title}"\n\nGenre: ${genre}`;
-        const result = await generateWithGemini(prompt);
+      <Banner message={notice} onDismiss={() => setNotice("")} />
 
-        if (result) {
-            setDescription(result);
-        }
-        setIsGenerating((prev) => ({ ...prev, description: false }));
-    };
+      <form onSubmit={publish} className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-4 items-start">
+        <Card className="p-6 flex flex-col gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field label="Title" value={form.title} onChange={set("title")} />
+            <Field label="Author" value={form.author} onChange={set("author")} placeholder="Optional" />
+          </div>
+          <Field label="Description" multiline rows={6} value={form.description} onChange={set("description")} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field label="Genre" as="select" value={form.genre} onChange={setGenre}>
+              <option value="">Pick a genre</option>
+              {genres.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
+            </Field>
+            <Field label="Subgenre" as="select" value={form.subgenre} onChange={set("subgenre")} disabled={!form.genre}>
+              <option value="">{form.genre ? "Pick a subgenre" : "Pick a genre first"}</option>
+              {subgenres.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </Field>
+          </div>
+        </Card>
 
-    const handleSelectTitle = (selectedTitle) => {
-        // Remove numbering like "1. " from the start of the title if it exists
-        setTitle(selectedTitle.replace(/^\d+\.\s*/, ""));
-        setShowTitleModal(false);
-    };
+        <div className="flex flex-col gap-4">
+          <Card className="p-6 flex flex-col gap-3">
+            <Eyebrow>Cover</Eyebrow>
+            <div className="flex items-end gap-4">
+              <Cover src={coverPreview} title={form.title || "cover"} className="w-28 h-[168px] rounded-cover" />
+              <div className="flex flex-col gap-2">
+                <Button variant="secondary" onClick={() => coverInput.current?.click()}>
+                  {coverFile ? "Change image" : "Choose image"}
+                </Button>
+                <span className="text-[11px] font-semibold text-ink-holder">Optional · 2:3 looks best</span>
+              </div>
+            </div>
+            <input ref={coverInput} type="file" accept="image/*" hidden onChange={(e) => pickCover(e.target.files?.[0])} />
+          </Card>
 
-    const handleCoverChange = (e) => {
-        if (e.target.files && e.target.files[0]) {
-            setCoverFile(e.target.files[0]); // Store the File object
-            setCoverPreview(URL.createObjectURL(e.target.files[0]));
-        } else {
-            setCoverFile(null);
-            setCoverPreview(null);
-        }
-    };
-    const handleManuscriptChange = (e) => {
-        if (e.target.files && e.target.files[0]) {
-            setManuscriptFile(e.target.files[0]); // Store the File object
-            setManuscriptName(e.target.files[0].name);
-        } else {
-            setManuscriptFile(null);
-            setManuscriptName("");
-        }
-    };
-
-    const handlePublish = async (e) => {
-        e.preventDefault();
-
-        setUploadMessage("");
-        setUploadError("");
-
-        if (!title || !description || !genre || !manuscriptFile) {
-            setUploadError(
-                "Please fill in all required fields and upload a manuscript file."
-            );
-            return;
-        }
-
-        setIsUploading(true);
-
-        try {
-           
-            const token = localStorage.getItem("token");
-            const headers = {
-                Authorization: `Bearer ${token}`
-            };
-
-            const formData = new FormData();
-
-            formData.append("cover", coverFile);
-            formData.append("manuscript", manuscriptFile);
-            formData.append("title", title);
-            formData.append("description", description);
-            formData.append("genre", genre);
-            formData.append("subgenre", subGenre);
-
-            // Use the custom hook to upload files
-            // Assuming UseFileUpload is a custom hook that handles file uploads
-
-            const { status: uploadStatus, response: uploadResponse } = await UseFileUpload(await getBackendUrl("/books/upload"), formData, headers);
-
-            if (uploadStatus === 200) {
-                setUploadMessage("Your book has been successfully uploaded!");
-                setTitle("");
-                setDescription("");
-                setGenre("");
-                setSubGenre("");
-                setCoverPreview(null);
-                setManuscriptName("");
-                setCoverFile(null);
-                setManuscriptFile(null);
-            } else {
-                setUploadError(
-                    `Failed to upload book. Server responded with status ${uploadStatus}: ${uploadResponse.message}`
-                );
-            }
-        } catch (error) {
-            console.error("Error during book upload:", error);
-            setUploadError(
-                "An error occurred while uploading your book. Please try again."
-            );
-        } finally {
-            setIsUploading(false);
-        }
-    };
-
-    return (
-        <div>
-            {showTitleModal && (
-                <SuggestionModal
-                    title="✨ AI-Generated Titles"
-                    suggestions={titleSuggestions}
-                    onSelect={handleSelectTitle}
-                    onClose={() => setShowTitleModal(false)}
-                    isLoading={isGenerating.title}
-                />
-            )}
-            <h1 className="text-3xl font-bold text-gray-800 mb-6">Upload New Book</h1>
-            <form
-                className="space-y-8 bg-white p-8 rounded-lg shadow-md"
-                onSubmit={handlePublish}
+          <Card className="p-6 flex flex-col gap-3">
+            <Eyebrow>Manuscript</Eyebrow>
+            <button
+              type="button"
+              onClick={() => manuscriptInput.current?.click()}
+              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={onDrop}
+              className={`rounded-card px-4 py-7 flex flex-col items-center gap-2 text-center shadow-[inset_0_0_0_1.5px_var(--rp-dashed)] ${dragging ? "bg-surface-2" : "bg-transparent hover:bg-surface-2"}`}
             >
-                {" "}
-                {/* Link onSubmit to handlePublish */}
-                {uploadError && (
-                    <div
-                        className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative"
-                        role="alert"
-                    >
-                        <strong className="font-bold">Upload Error: </strong>
-                        <span className="block sm:inline">{uploadError}</span>
-                    </div>
-                )}
-                {uploadMessage && (
-                    <div
-                        className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded relative"
-                        role="alert"
-                    >
-                        <strong className="font-bold">Success: </strong>
-                        <span className="block sm:inline">{uploadMessage}</span>
-                    </div>
-                )}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    {/* Left Column */}
-                    <div>
-                        <div>
-                            <label
-                                htmlFor="title"
-                                className="block text-sm font-medium text-gray-700"
-                            >
-                                Book Title
-                            </label>
-                            <input
-                                type="text"
-                                name="title"
-                                id="title"
-                                value={title}
-                                onChange={(e) => setTitle(e.target.value)}
-                                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900"
-                            />
-                        </div>
+              <span className="w-[38px] h-[38px] rounded-full bg-surface-2 flex items-center justify-center text-link">
+                <UploadIcon width={18} height={18} />
+              </span>
+              <span className="text-sm font-extrabold text-ink-title break-all">{manuscript ? manuscript.name : "Drop a PDF or EPUB"}</span>
+              <span className="text-xs font-semibold text-ink-holder">{manuscript ? "Click to replace" : "or click to choose · up to 50 MB"}</span>
+            </button>
+            <input ref={manuscriptInput} type="file" accept={MANUSCRIPT_TYPES.join(",")} hidden onChange={(e) => pickManuscript(e.target.files?.[0])} />
+          </Card>
 
-                        <div className="mt-6">
-                            <div className="flex justify-between items-center">
-                                <label
-                                    htmlFor="description"
-                                    className="block text-sm font-medium text-gray-700"
-                                >
-                                    Description
-                                </label>
-                                <button
-                                    type="button"
-                                    onClick={handleGenerateDescription}
-                                    disabled={isGenerating.description}
-                                    className="flex items-center text-xs text-indigo-600 font-semibold hover:text-indigo-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    <SparklesIcon className="h-4 w-4 mr-1" />{" "}
-                                    {isGenerating.description
-                                        ? "Drafting..."
-                                        : "✨ Draft with AI"}
-                                </button>
-                            </div>
-                            <textarea
-                                id="description"
-                                name="description"
-                                rows="4"
-                                value={description}
-                                onChange={(e) => setDescription(e.target.value)}
-                                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900"
-                            ></textarea>
-                        </div>
-                        <div className="mt-6">
-                            <label
-                                htmlFor="genre"
-                                className="block text-sm font-medium text-gray-700"
-                            >
-                                Genre
-                            </label>
-                            <div className="relative">
-                                <select
-                                    id="genre"
-                                    name="genre"
-                                    value={genre}
-                                    onChange={(e) => setGenre(e.target.value)}
-                                    className="appearance-none mt-1 block w-full pl-3 pr-10 py-2 text-base border border-gray-300 text-gray-900 bg-white focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
-                                >
-                                    <option value="">Select a genre</option>
-                                    {genreOptions.map((option) => (
-                                        <option key={option.value} value={option.value}>
-                                            {option.label}
-                                        </option>
-                                    ))}
-                                </select>
-                                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
-                                    <svg className="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="none">
-                                        <path d="M7 7l3-3 3 3m0 6l-3 3-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                </div>
-                            </div>
-                        </div>
-                        <div className="mt-6">
-                            <label htmlFor="subGenre" className="block text-sm font-medium text-gray-700">
-                                Subgenre
-                            </label>
-                            <div className="relative">
-                                <select
-                                    id="subGenre"
-                                    name="subGenre"
-                                    value={subGenre} // Assuming subgenre is also stored in genre for simplicity
-                                    onChange={(e) => setSubGenre(e.target.value)}
-                                    className="appearance-none mt-1 block w-full pl-3 pr-10 py-2 text-base border border-gray-300 text-gray-900 bg-white focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
-                                >
-                                    <option value="">Select a subgenre</option>
-                                    {subgenreOptions.map((option) => (
-                                        <option key={option.value} value={option.value}>
-                                            {option.label}
-                                        </option>
-                                    ))}
-                                </select>
-                                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
-                                    <svg className="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="none">
-                                        <path d="M7 7l3-3 3 3m0 6l-3 3-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                </div>
-                            </div>
-                        </div>
-                        <div className="mt-6">
-                            <button
-                                type="button"
-                                onClick={handleGenerateTitles}
-                                disabled={isGenerating.title}
-                                className="w-full flex items-center justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-indigo-400"
-                            >
-                                <SparklesIcon className="h-5 w-5 mr-2" /> ✨ Suggest Titles with
-                                AI
-                            </button>
-                            <p className="text-xs text-center text-gray-500 mt-2">
-                                Uses the description and genre to suggest titles.
-                            </p>
-                        </div>
-                    </div>
-
-                    {/* Right Column */}
-                    <div className="space-y-6">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">
-                                Cover Image
-                            </label>
-                            <div className="mt-1 flex items-center space-x-6">
-                                <div className="flex-shrink-0 h-48 w-32 rounded-md bg-gray-100 flex items-center justify-center">
-                                    {coverPreview ? (
-                                        <img
-                                            src={coverPreview}
-                                            alt="Cover preview"
-                                            className="h-full w-full object-cover rounded-md"
-                                        />
-                                    ) : (
-                                        <span className="text-gray-400 text-xs text-center">
-                                            Image Preview
-                                        </span>
-                                    )}
-                                </div>
-                                <label
-                                    htmlFor="cover-upload"
-                                    className="cursor-pointer bg-white py-2 px-3 border border-gray-300 rounded-md shadow-sm text-sm leading-4 font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                                >
-                                    <span>Upload file</span>
-                                    <input
-                                        id="cover-upload"
-                                        name="cover-upload"
-                                        type="file"
-                                        className="sr-only"
-                                        onChange={handleCoverChange}
-                                        accept="image/*"
-                                    />
-                                </label>
-                            </div>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700">
-                                Book Manuscript (PDF, EPUB)
-                            </label>
-                            <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md">
-                                <div className="space-y-1 text-center">
-                                    <svg
-                                        className="mx-auto h-12 w-12 text-gray-400"
-                                        stroke="currentColor"
-                                        fill="none"
-                                        viewBox="0 0 48 48"
-                                        aria-hidden="true"
-                                    >
-                                        <path
-                                            d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8"
-                                            strokeWidth="2"
-                                            strokeLinecap="round"
-                                            strokeLinejoin="round"
-                                        />
-                                    </svg>
-                                    <div className="flex text-sm text-gray-600">
-                                        <label
-                                            htmlFor="file-upload"
-                                            className="relative cursor-pointer bg-white rounded-md font-medium text-indigo-600 hover:text-indigo-500 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-indigo-500"
-                                        >
-                                            <span>Upload a file</span>
-                                            <input
-                                                id="file-upload"
-                                                name="file-upload"
-                                                type="file"
-                                                className="sr-only"
-                                                onChange={handleManuscriptChange}
-                                                accept=".pdf,.epub"
-                                            />
-                                        </label>
-                                        <p className="pl-1">or drag and drop</p>
-                                    </div>
-                                    <p className="text-xs text-gray-500">
-                                        {manuscriptName || "PDF, EPUB up to 50MB"}
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div className="pt-5">
-                    <div className="flex justify-end">
-                        <button
-                            type="button"
-                            className="bg-white py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                        >
-                            Save as Draft
-                        </button>
-                        <button
-                            type="submit" // This button will now trigger handlePublish via form onSubmit
-                            className="ml-3 inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                            disabled={
-                                isUploading || isGenerating.title || isGenerating.description
-                            } // Disable during any processing
-                        >
-                            {isUploading ? "Publishing..." : "Publish Book"}
-                        </button>
-                    </div>
-                </div>
-            </form>
+          <Button type="submit" disabled={!ready} className="w-full">
+            {uploading ? "Publishing…" : "Publish book"}
+          </Button>
+          {!uploading && missing.length > 0 && (
+            <span className="text-xs font-semibold text-ink-holder text-center">Still needs {missing.length > 1 ? `${missing.slice(0, -1).join(", ")} and ${missing.at(-1)}` : missing[0]}.</span>
+          )}
         </div>
-    );
+      </form>
+    </>
+  );
 };
 
 export default UploadBookPage;

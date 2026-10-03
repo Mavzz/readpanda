@@ -9,6 +9,7 @@ import (
 	"github.com/Mavzz/readpanda/api-go/internal/config"
 	"github.com/Mavzz/readpanda/api-go/internal/database"
 	"github.com/Mavzz/readpanda/api-go/internal/handlers"
+	"github.com/Mavzz/readpanda/api-go/internal/metadata"
 	"github.com/Mavzz/readpanda/api-go/internal/middleware"
 	"github.com/Mavzz/readpanda/api-go/internal/utils"
 	"github.com/gorilla/mux"
@@ -35,6 +36,10 @@ func main() {
 		log.Printf("Warning: Push notifications disabled: %v", err)
 	}
 
+	// Give books still named after their files a real title, author and
+	// length (9a/9b). Runs in the background; already-checked books are skipped.
+	metadata.EnrichInBackground()
+
 	// Initialize handlers
 	userHandler := handlers.NewUserHandler(cfg)
 	bookHandler := handlers.NewBookHandler(cfg)
@@ -45,6 +50,7 @@ func main() {
 	progressHandler := handlers.NewProgressHandler(cfg)
 	commentHandler := handlers.NewCommentHandler(cfg)
 	highlightHandler := handlers.NewHighlightHandler(cfg)
+	discoverHandler := handlers.NewDiscoverHandler(cfg)
 	adminHandler := handlers.NewAdminHandler(cfg)
 
 	// Create router
@@ -81,6 +87,12 @@ func main() {
 	router.HandleFunc(apiPrefix+"/books", bookHandler.GetBooksForUser).Methods("GET")
 	router.HandleFunc(apiPrefix+"/books/all", bookHandler.GetAllBooks).Methods("GET")
 	router.HandleFunc(apiPrefix+"/books/seed", bookHandler.SeedBooksFromStorage).Methods("POST", "OPTIONS")
+	// After /books/all: mux takes the first route that matches, so the literal
+	// path has to be registered before the {bookId} pattern would swallow it.
+	router.HandleFunc(apiPrefix+"/books/{bookId}", discoverHandler.GetBookDetail).Methods("GET")
+
+	// Discover tab (8a)
+	router.HandleFunc(apiPrefix+"/discover", discoverHandler.GetDiscover).Methods("GET")
 
 	// Genres / Subgenres routes
 	router.HandleFunc(apiPrefix+"/genres", preferencesHandler.GetGenres).Methods("GET")
@@ -103,6 +115,7 @@ func main() {
 	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}/books", bucketHandler.AddBooksToBucket).Methods("POST", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}/books", bucketHandler.GetUserBucketBooks).Methods("GET")
 	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}/books/{bookId}", bucketHandler.RemoveBookFromBucket).Methods("DELETE", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}/order", bucketHandler.ReorderUserBucket).Methods("PUT", "OPTIONS")
 
 	// Curated "Our Picks" routes
 	// GET  — returns active buckets for mobile, all buckets for portal (X-Application-Type: portal)
@@ -152,6 +165,7 @@ func main() {
 
 	// Admin data browser (portal only, admin role required)
 	// Generic view over every table in the public schema; see internal/handlers/admin.go.
+	router.HandleFunc(apiPrefix+"/admin/books/enrich", bookHandler.AdminEnrichBooks).Methods("POST")
 	router.HandleFunc(apiPrefix+"/admin/tables", adminHandler.ListTables).Methods("GET")
 	router.HandleFunc(apiPrefix+"/admin/tables/{table}", adminHandler.GetTableSchema).Methods("GET")
 	router.HandleFunc(apiPrefix+"/admin/tables/{table}/rows", adminHandler.GetTableRows).Methods("GET")
