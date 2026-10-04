@@ -11,6 +11,7 @@ import (
 
 	"github.com/Mavzz/readpanda/api-go/internal/config"
 	"github.com/Mavzz/readpanda/api-go/internal/database"
+	"github.com/Mavzz/readpanda/api-go/internal/metadata"
 	"github.com/Mavzz/readpanda/api-go/internal/models"
 	"github.com/Mavzz/readpanda/api-go/internal/notify"
 	"github.com/Mavzz/readpanda/api-go/internal/utils"
@@ -58,12 +59,21 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 	description := r.FormValue("description")
 	genre := r.FormValue("genre")
 	subgenre := r.FormValue("subgenre")
+	authorName := strings.TrimSpace(r.FormValue("author_name"))
+	// The portal's bulk upload sends notify=false so a batch of test books
+	// doesn't send every reader one notification per book.
+	notifyReaders := r.FormValue("notify") != "false"
 
 	claims, err := utils.DecodeToken(token, h.Config.JWTSecret)
 	if err != nil {
 		http.Error(w, `{"error": "Invalid token"}`, http.StatusUnauthorized)
 		return
 	}
+
+	// Storage keys carry the book id: uploads routinely share file names
+	// ("cover.jpeg" from an EPUB), and a shared key would overwrite the
+	// other book's file.
+	bookID := "bk_" + uuid.New().String()[:8]
 
 	var coverLink, manuscriptLink *string
 
@@ -77,7 +87,7 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		coverPath := fmt.Sprintf("books/covers/%s", coverHeader.Filename)
+		coverPath := fmt.Sprintf("books/covers/%s-%s", bookID, coverHeader.Filename)
 		url, err := utils.UploadFileToStorage(coverData, coverHeader.Header.Get("Content-Type"), coverPath)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to upload cover: `+err.Error()+`"}`, http.StatusInternalServerError)
@@ -96,7 +106,7 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		manuscriptPath := fmt.Sprintf("books/manuscripts/%s", manuscriptHeader.Filename)
+		manuscriptPath := fmt.Sprintf("books/manuscripts/%s-%s", bookID, manuscriptHeader.Filename)
 		url, err := utils.UploadFileToStorage(manuscriptData, manuscriptHeader.Header.Get("Content-Type"), manuscriptPath)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to upload manuscript: `+err.Error()+`"}`, http.StatusInternalServerError)
@@ -110,11 +120,10 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bookID := "bk_" + uuid.New().String()[:8]
 	// Insert book into database
 	_, err = database.DB.Exec(
-		"INSERT INTO books (book_id, title, description, subgenre, genre, cover_image_url, manuscript_url, status, views, user_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-		bookID, title, description, subgenre, genre, coverLink, manuscriptLink, 1, 0, claims.UserID,
+		"INSERT INTO books (book_id, title, description, subgenre, genre, author_name, cover_image_url, manuscript_url, status, views, user_id) VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8, $9, $10, $11)",
+		bookID, title, description, subgenre, genre, authorName, coverLink, manuscriptLink, 1, 0, claims.UserID,
 	)
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
@@ -124,7 +133,7 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 	// Tell every other reader. Only once there is a manuscript: a NEW_BOOK
 	// notification opens the reader, and a cover alone has nothing to open.
 	// A failure here costs the announcement, not the upload.
-	if manuscriptLink != nil {
+	if manuscriptLink != nil && notifyReaders {
 		displayTitle := strings.TrimSpace(title)
 		if displayTitle == "" {
 			displayTitle = "A new book"
@@ -138,6 +147,8 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 			log.Printf("books: failed to announce %s: %v", bookID, err)
 		}
 	}
+
+	metadata.EnrichInBackground()
 
 	response := map[string]string{
 		"message": "Book uploaded successfully",
@@ -173,7 +184,7 @@ func (h *BookHandler) GetBooksForUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := database.DB.Query("SELECT book_id, title, description, subgenre, genre, cover_image_url, manuscript_url, status, views, created_at FROM books WHERE user_id = $1", claims.UserID)
+	rows, err := database.DB.Query("SELECT book_id, title, description, subgenre, genre, author_name, page_count, cover_image_url, manuscript_url, status, views, created_at FROM books WHERE user_id = $1", claims.UserID)
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -183,7 +194,7 @@ func (h *BookHandler) GetBooksForUser(w http.ResponseWriter, r *http.Request) {
 	books := []models.Book{}
 	for rows.Next() {
 		var book models.Book
-		err := rows.Scan(&book.ID, &book.Title, &book.Description, &book.Subgenre, &book.Genre, &book.CoverImageURL, &book.ManuscriptURL, &book.Status, &book.Views, &book.CreatedAt)
+		err := rows.Scan(&book.ID, &book.Title, &book.Description, &book.Subgenre, &book.Genre, &book.AuthorName, &book.PageCount, &book.CoverImageURL, &book.ManuscriptURL, &book.Status, &book.Views, &book.CreatedAt)
 		if err != nil {
 			http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 			return
@@ -219,7 +230,7 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := database.DB.Query("SELECT book_id, title, description, subgenre, genre, cover_image_url, manuscript_url, status, views, created_at FROM books")
+	rows, err := database.DB.Query("SELECT book_id, title, description, subgenre, genre, author_name, page_count, cover_image_url, manuscript_url, status, views, created_at FROM books")
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -229,7 +240,7 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 	books := []models.Book{}
 	for rows.Next() {
 		var book models.Book
-		err := rows.Scan(&book.ID, &book.Title, &book.Description, &book.Subgenre, &book.Genre, &book.CoverImageURL, &book.ManuscriptURL, &book.Status, &book.Views, &book.CreatedAt)
+		err := rows.Scan(&book.ID, &book.Title, &book.Description, &book.Subgenre, &book.Genre, &book.AuthorName, &book.PageCount, &book.CoverImageURL, &book.ManuscriptURL, &book.Status, &book.Views, &book.CreatedAt)
 		if err != nil {
 			http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 			return
@@ -321,6 +332,11 @@ func (h *BookHandler) SeedBooksFromStorage(w http.ResponseWriter, r *http.Reques
 		inserted++
 	}
 
+	// New books arrive with file-name titles; look them up in the background.
+	if inserted > 0 {
+		metadata.EnrichInBackground()
+	}
+
 	response := map[string]interface{}{
 		"message":  fmt.Sprintf("Seeded %d books from object storage", inserted),
 		"inserted": inserted,
@@ -328,4 +344,45 @@ func (h *BookHandler) SeedBooksFromStorage(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// AdminEnrichBooks — POST /admin/books/enrich?limit=N
+// Runs the metadata lookup now over books it hasn't checked yet and reports
+// what it found. The server also runs it at startup and after a seed or
+// upload; this is for doing it on demand. ?recheck=true clears every book's
+// checked mark first, and with it whatever an earlier lookup filled in
+// (never an uploader's author or the reader's page count), so failed or
+// outdated lookups are redone from scratch.
+func (h *BookHandler) AdminEnrichBooks(w http.ResponseWriter, r *http.Request) {
+	if _, ok := utils.RequireAdmin(w, r, h.Config.JWTSecret); !ok {
+		return
+	}
+	if r.URL.Query().Get("recheck") == "true" {
+		if _, err := database.DB.Exec(
+			`UPDATE books
+			    SET metadata_checked_at = NULL,
+			        author_name = CASE WHEN author_from_lookup THEN NULL ELSE author_name END,
+			        author_from_lookup = false,
+			        page_count = CASE WHEN pages_from_lookup THEN NULL ELSE page_count END,
+			        pages_from_lookup = false`,
+		); err != nil {
+			http.Error(w, `{"error": "Failed to reset metadata"}`, http.StatusInternalServerError)
+			return
+		}
+	}
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+	checked, resolved, ran, err := metadata.EnrichPending(r.Context(), limit)
+	if err != nil {
+		http.Error(w, `{"error": "Metadata lookup failed"}`, http.StatusInternalServerError)
+		return
+	}
+	if !ran {
+		http.Error(w, `{"error": "A metadata lookup is already running"}`, http.StatusConflict)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int{"checked": checked, "resolved": resolved})
 }

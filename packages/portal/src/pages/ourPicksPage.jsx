@@ -1,527 +1,338 @@
-import React, { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useGet } from '../services/useGet';
-import { usePost } from '../services/usePost';
-import { usePut } from '../services/usePut';
-import { useDelete } from '../services/useDelete';
-import { getBackendUrl } from '../utils/Helper';
+import { useSearchParams } from 'react-router-dom';
+import {
+  Banner, BookRow, Button, Card, CoverStack, CreateSlot, Eyebrow, Field, IconButton, Loading, Modal, PageHeader, SearchInput, TextAction, Toggle,
+} from '../components/ui';
+import { CloseIcon } from '../components/icons';
+import { useConfirm } from '../components/useConfirm';
+import { api } from '../services/api';
+import { OUR_PICKS_KEY, bookMeta, useAllBooks, useOurPicks } from '../services/queries';
+
+const bucketBooksKey = (id) => ['our-picks-books', id];
+
+const matches = (book, q) => !q || book.title.toLowerCase().includes(q) || (book.author_name ?? '').toLowerCase().includes(q);
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// ── Create / edit modal ───────────────────────────────────────
+
+const BucketModal = ({ bucket, nextOrder, allBooks, onClose, onSaved }) => {
+  const editing = !!bucket;
+  const [title, setTitle] = useState(bucket?.title ?? '');
+  const [order, setOrder] = useState(bucket?.sort_order ?? nextOrder);
+  const [active, setActive] = useState(bucket?.is_active ?? true);
+  const [picked, setPicked] = useState([]);
+  const [search, setSearch] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const valid = title.trim().length > 0 && !saving;
+  const q = search.trim().toLowerCase();
+
+  const save = async () => {
+    if (!valid) return;
+    setSaving(true);
+    setError('');
+    try {
+      const body = { title: title.trim(), sort_order: Number(order) || 0 };
+      if (editing) {
+        const res = await api.put(`/home/our-picks/${bucket.id}`, { ...body, is_active: active });
+        onSaved({ ...bucket, ...res });
+      } else {
+        const res = await api.post('/home/our-picks', { ...body, book_ids: picked });
+        const preview = picked
+          .map((id) => allBooks.find((b) => b.id === id))
+          .filter(Boolean)
+          .map((b) => ({ book_id: b.id, title: b.title, cover_image_url: b.cover_image_url }));
+        onSaved({ ...res, books_preview: preview });
+      }
+      onClose();
+    } catch (err) {
+      setError(`Couldn't save: ${err.message}`);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={editing ? 'Edit bucket' : 'New curated bucket'}
+      onClose={onClose}
+      width={editing ? 480 : 560}
+      action={{ label: saving ? 'Saving…' : editing ? 'Save' : 'Create', onClick: save, disabled: !valid }}
+    >
+      <Banner message={error} />
+      <form onSubmit={(e) => { e.preventDefault(); save(); }} className="flex flex-col gap-4">
+        <div className="grid grid-cols-[1fr_96px] gap-3">
+          <Field label="Title" value={title} max={100} onChange={(e) => setTitle(e.target.value)} placeholder="Quiet English novels" autoFocus />
+          <Field label="Order" type="number" value={order} onChange={(e) => setOrder(e.target.value)} hint="Lower first" />
+        </div>
+        {editing && (
+          <div className="flex items-center gap-3">
+            <Toggle on={active} label="Featured on Discover" onChange={setActive} />
+            <span className="text-xs font-semibold text-ink-body">Featured on Discover</span>
+          </div>
+        )}
+        <button type="submit" hidden />
+      </form>
+
+      {!editing && (
+        <div className="flex flex-col gap-2.5">
+          <div className="flex items-center justify-between">
+            <Eyebrow>Books{picked.length > 0 && ` · ${picked.length} picked`}</Eyebrow>
+          </div>
+          <SearchInput value={search} onChange={setSearch} placeholder="Search books by title or author" />
+          <div className="max-h-72 overflow-y-auto flex flex-col">
+            {allBooks.filter((b) => matches(b, q)).map((book) => {
+              const on = picked.includes(book.id);
+              return (
+                <button
+                  key={book.id}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => setPicked((p) => (on ? p.filter((id) => id !== book.id) : [...p, book.id]))}
+                  className={`text-left px-3 py-2 rounded-field ${on ? 'bg-surface-2' : 'bg-transparent hover:bg-surface-1'}`}
+                >
+                  <BookRow
+                    cover={book.cover_image_url}
+                    title={book.title}
+                    meta={bookMeta(book) || book.genre}
+                    trailing={
+                      <span className={`w-5 h-5 rounded-full shrink-0 flex items-center justify-center text-[11px] font-extrabold ${on ? 'bg-gold text-on-gold' : 'shadow-[inset_0_0_0_1.5px_var(--rp-surface-3)]'}`}>
+                        {on ? picked.indexOf(book.id) + 1 : ''}
+                      </span>
+                    }
+                  />
+                </button>
+              );
+            })}
+            {allBooks.length === 0 && <p className="m-0 py-4 text-center text-[13px] text-ink-holder">No books uploaded yet.</p>}
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+};
+
+// ── Books in one bucket ───────────────────────────────────────
+
+const BucketBooksPanel = ({ bucket, allBooks, onError }) => {
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState('');
+  const [busyId, setBusyId] = useState(null);
+
+  const { data: inBucket = [], isLoading, error, refetch } = useQuery({
+    queryKey: bucketBooksKey(bucket.id),
+    queryFn: async () => (await api.get(`/home/our-picks/${bucket.id}/books`)).books ?? [],
+  });
+
+  const patchBucket = (fn) =>
+    queryClient.setQueryData(OUR_PICKS_KEY, (prev) => (prev ?? []).map((b) => (b.id === bucket.id ? fn(b) : b)));
+
+  // /books/all keys books by `id`; bucket entries by `book_id`.
+  const add = async (book) => {
+    setBusyId(book.id);
+    try {
+      await api.post(`/home/our-picks/${bucket.id}/books`, { book_ids: [book.id] });
+      const entry = { book_id: book.id, title: book.title, cover_image_url: book.cover_image_url, author_name: book.author_name };
+      queryClient.setQueryData(bucketBooksKey(bucket.id), (prev) => [...(prev ?? []), entry]);
+      patchBucket((b) => ({ ...b, book_count: (b.book_count ?? 0) + 1, books_preview: [...(b.books_preview ?? []), entry] }));
+    } catch (err) {
+      onError(`Couldn't add "${book.title}": ${err.message}`);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const remove = async (book) => {
+    setBusyId(book.book_id);
+    try {
+      await api.del(`/home/our-picks/${bucket.id}/books/${book.book_id}`);
+      queryClient.setQueryData(bucketBooksKey(bucket.id), (prev) => (prev ?? []).filter((b) => b.book_id !== book.book_id));
+      patchBucket((b) => ({
+        ...b,
+        book_count: Math.max(0, (b.book_count ?? 1) - 1),
+        books_preview: (b.books_preview ?? []).filter((p) => p.book_id !== book.book_id),
+      }));
+    } catch (err) {
+      onError(`Couldn't remove "${book.title}": ${err.message}`);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const inIds = new Set(inBucket.map((b) => b.book_id));
+  const q = search.trim().toLowerCase();
+  const addable = allBooks.filter((b) => !inIds.has(b.id) && matches(b, q));
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-4 mt-4 shadow-[inset_0_1px_0_var(--rp-hairline)]">
+      <div className="flex flex-col gap-2.5 min-w-0">
+        <Eyebrow>In this bucket · {inBucket.length}</Eyebrow>
+        {error ? (
+          <Banner message="Couldn't load this bucket's books." onRetry={refetch} />
+        ) : isLoading ? (
+          <Loading />
+        ) : inBucket.length === 0 ? (
+          <p className="m-0 text-[13px] text-ink-holder">No books yet. Add some from the list.</p>
+        ) : (
+          <div className="max-h-80 overflow-y-auto flex flex-col">
+            {inBucket.map((b) => (
+              <div key={b.book_id} className="py-2 hairline-b last:shadow-none">
+                <BookRow
+                  cover={b.cover_image_url}
+                  title={b.title}
+                  meta={b.author_name}
+                  trailing={
+                    <IconButton label={`Remove ${b.title}`} disabled={busyId === b.book_id} onClick={() => remove(b)}>
+                      <CloseIcon width={14} height={14} strokeWidth={2.5} />
+                    </IconButton>
+                  }
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-2.5 min-w-0">
+        <Eyebrow>Add books</Eyebrow>
+        <SearchInput value={search} onChange={setSearch} placeholder="Search books by title or author" />
+        {addable.length === 0 ? (
+          <p className="m-0 text-[13px] text-ink-holder">{q ? 'Nothing matches that search.' : 'Every book is already in this bucket.'}</p>
+        ) : (
+          <div className="max-h-80 overflow-y-auto flex flex-col">
+            {addable.map((b) => (
+              <div key={b.id} className="py-2 hairline-b last:shadow-none">
+                <BookRow
+                  cover={b.cover_image_url}
+                  title={b.title}
+                  meta={bookMeta(b) || b.genre}
+                  trailing={
+                    <TextAction disabled={busyId === b.id} onClick={() => add(b)}>
+                      {busyId === b.id ? 'Adding…' : 'Add'}
+                    </TextAction>
+                  }
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ── Page ──────────────────────────────────────────────────────
 
 const OurPicksPage = () => {
   const queryClient = useQueryClient();
+  const confirm = useConfirm();
+  const [params, setParams] = useSearchParams();
 
-  // Create form
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [newTitle, setNewTitle] = useState('');
-  const [newSortOrder, setNewSortOrder] = useState(0);
-  const [newBookIds, setNewBookIds] = useState([]);
-  const [newBookSearch, setNewBookSearch] = useState('');
-  const [creating, setCreating] = useState(false);
+  const { data: buckets = [], isLoading, error, refetch } = useOurPicks();
+  const { data: allBooks = [] } = useAllBooks();
 
-  // Edit state: { id, title, sort_order, is_active }
-  const [editing, setEditing] = useState(null);
-  const [savingEdit, setSavingEdit] = useState(false);
+  // { bucket } to edit, {} to create. The dashboard's create slot links here with ?new=1.
+  const [modal, setModal] = useState(() => (params.get('new') ? {} : null));
+  const [managingId, setManagingId] = useState(null);
+  const [togglingId, setTogglingId] = useState(null);
+  const [banner, setBanner] = useState('');
 
-  // Delete state
-  const [deletingId, setDeletingId] = useState(null);
+  useEffect(() => {
+    if (params.get('new')) setParams({}, { replace: true });
+  }, [params, setParams]);
 
-  // Book manager: which bucket's books panel is open
-  const [managingBucketId, setManagingBucketId] = useState(null);
-  const [bucketBooks, setBucketBooks] = useState([]);
-  const [loadingBooks, setLoadingBooks] = useState(false);
-  const [addingBookId, setAddingBookId] = useState(null);
-  const [removingBookId, setRemovingBookId] = useState(null);
-  const [bookSearch, setBookSearch] = useState('');
+  const sorted = [...buckets].sort((a, b) => a.sort_order - b.sort_order);
+  const nextOrder = buckets.reduce((m, b) => Math.max(m, b.sort_order + 1), 0);
 
-  const authHeaders = () => ({
-    Authorization: `Bearer ${localStorage.getItem('token')}`,
-  });
+  const setBuckets = (fn) => queryClient.setQueryData(OUR_PICKS_KEY, (prev) => fn(prev ?? []));
 
-  const { data: buckets = [], isLoading: loading, error } = useQuery({
-    queryKey: ['our-picks'],
-    queryFn: async () => {
-      const { response } = await useGet(await getBackendUrl('/home/our-picks'), authHeaders());
-      return response.buckets || [];
-    },
-  });
+  const onSaved = (saved) =>
+    setBuckets((prev) => (prev.some((b) => b.id === saved.id) ? prev.map((b) => (b.id === saved.id ? saved : b)) : [...prev, saved]));
 
-  const { data: allBooks = [] } = useQuery({
-    queryKey: ['books-all'],
-    queryFn: async () => {
-      const { response } = await useGet(await getBackendUrl('/books/all'), authHeaders());
-      return response.books || [];
-    },
-    staleTime: Infinity,
-  });
-
-  // ── Create ──────────────────────────────────────────────────
-
-  const handleCreate = async (e) => {
-    e.preventDefault();
-    const title = newTitle.trim();
-    if (!title) return;
-    setCreating(true);
+  const toggleActive = async (bucket) => {
+    setTogglingId(bucket.id);
     try {
-      const { response } = await usePost(
-        await getBackendUrl('/home/our-picks'),
-        { title, sort_order: newSortOrder, book_ids: newBookIds },
-        authHeaders()
-      );
-      const preview = allBooks
-        .filter((b) => newBookIds.includes(b.id))
-        .slice(0, 2)
-        .map((b) => ({ book_id: b.id, title: b.title, cover_image_url: b.cover_image_url }));
-      queryClient.setQueryData(['our-picks'], (prev) => [...(prev ?? []), { ...response, book_count: newBookIds.length, books_preview: preview }]);
-      setNewTitle('');
-      setNewSortOrder(0);
-      setNewBookIds([]);
-      setNewBookSearch('');
-      setShowCreateForm(false);
+      const res = await api.put(`/home/our-picks/${bucket.id}`, { title: bucket.title, sort_order: bucket.sort_order, is_active: !bucket.is_active });
+      onSaved({ ...bucket, ...res });
     } catch (err) {
-      alert(err.message);
+      setBanner(`Couldn't update "${bucket.title}": ${err.message}`);
     } finally {
-      setCreating(false);
+      setTogglingId(null);
     }
   };
 
-  // ── Edit ────────────────────────────────────────────────────
-
-  const handleEditSave = async () => {
-    if (!editing?.title?.trim()) return;
-    setSavingEdit(true);
+  const remove = async (bucket) => {
+    const ok = await confirm({
+      title: 'Delete bucket',
+      message: `"${bucket.title}" comes off Discover for every reader. The books themselves stay.`,
+    });
+    if (!ok) return;
     try {
-      const { response } = await usePut(
-        await getBackendUrl(`/home/our-picks/${editing.id}`),
-        { title: editing.title.trim(), sort_order: editing.sort_order, is_active: editing.is_active },
-        authHeaders()
-      );
-      queryClient.setQueryData(['our-picks'], (prev) => (prev ?? []).map((b) => b.id === editing.id ? { ...b, ...response } : b));
-      setEditing(null);
+      await api.del(`/home/our-picks/${bucket.id}`);
+      if (managingId === bucket.id) setManagingId(null);
+      setBuckets((prev) => prev.filter((b) => b.id !== bucket.id));
     } catch (err) {
-      alert(err.message);
-    } finally {
-      setSavingEdit(false);
+      setBanner(`Couldn't delete "${bucket.title}": ${err.message}`);
     }
   };
-
-  // Toggle active without opening the full edit form
-  const handleToggleActive = async (bucket) => {
-    try {
-      const { response } = await usePut(
-        await getBackendUrl(`/home/our-picks/${bucket.id}`),
-        { title: bucket.title, sort_order: bucket.sort_order, is_active: !bucket.is_active },
-        authHeaders()
-      );
-      queryClient.setQueryData(['our-picks'], (prev) => (prev ?? []).map((b) => b.id === bucket.id ? { ...b, ...response } : b));
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  // ── Delete ──────────────────────────────────────────────────
-
-  const handleDelete = async (bucketId) => {
-    if (!window.confirm('Delete this curated bucket? This cannot be undone.')) return;
-    setDeletingId(bucketId);
-    if (managingBucketId === bucketId) setManagingBucketId(null);
-    try {
-      await useDelete(await getBackendUrl(`/home/our-picks/${bucketId}`), authHeaders());
-      queryClient.setQueryData(['our-picks'], (prev) => (prev ?? []).filter((b) => b.id !== bucketId));
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setDeletingId(null);
-    }
-  };
-
-  // ── Manage books ────────────────────────────────────────────
-
-  const openManageBooks = async (bucketId) => {
-    setManagingBucketId(bucketId);
-    setBookSearch('');
-    setLoadingBooks(true);
-    try {
-      const { response } = await useGet(
-        await getBackendUrl(`/home/our-picks/${bucketId}/books`),
-        authHeaders()
-      );
-      setBucketBooks(response.books || []);
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setLoadingBooks(false);
-    }
-  };
-
-  const handleAddBook = async (bookId) => {
-    setAddingBookId(bookId);
-    try {
-      await usePost(
-        await getBackendUrl(`/home/our-picks/${managingBucketId}/books`),
-        { book_ids: [bookId] },
-        authHeaders()
-      );
-      const book = allBooks.find((b) => b.id === bookId);
-      if (book) setBucketBooks((prev) => [...prev, { book_id: book.id, title: book.title, cover_image_url: book.cover_image_url, genre: book.genre }]);
-      queryClient.setQueryData(['our-picks'], (prev) => (prev ?? []).map((b) => b.id === managingBucketId ? { ...b, book_count: (b.book_count || 0) + 1 } : b));
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setAddingBookId(null);
-    }
-  };
-
-  const handleRemoveBook = async (bookId) => {
-    setRemovingBookId(bookId);
-    try {
-      await useDelete(
-        await getBackendUrl(`/home/our-picks/${managingBucketId}/books/${bookId}`),
-        authHeaders()
-      );
-      setBucketBooks((prev) => prev.filter((b) => b.book_id !== bookId));
-      queryClient.setQueryData(['our-picks'], (prev) => (prev ?? []).map((b) => b.id === managingBucketId ? { ...b, book_count: Math.max(0, (b.book_count || 1) - 1) } : b));
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setRemovingBookId(null);
-    }
-  };
-
-  const bucketBookIds = new Set(bucketBooks.map((b) => b.book_id));
-  const filteredAllBooks = allBooks.filter((b) =>
-    !bucketBookIds.has(b.id) &&
-    (bookSearch === '' || b.title.toLowerCase().includes(bookSearch.toLowerCase()))
-  );
-
-  if (loading) return (
-    <div className="flex items-center gap-3 text-gray-500 mt-10">
-      <svg className="animate-spin h-5 w-5 text-indigo-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-      </svg>
-      Loading...
-    </div>
-  );
-  if (error) return (
-    <div className="flex items-center gap-3 bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 mt-4 text-sm">
-      <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-      </svg>
-      {error.message}
-    </div>
-  );
 
   return (
-    <div>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-800">Our Picks</h1>
-          <p className="text-sm text-gray-500 mt-1">Curated recommendation buckets visible to all users</p>
-        </div>
-        <button
-          onClick={() => { setShowCreateForm(true); setNewTitle(''); setNewSortOrder(buckets.length); setNewBookIds([]); setNewBookSearch(''); }}
-          className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 active:bg-indigo-800 transition-colors shadow-sm"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          New Pick
-        </button>
-      </div>
+    <>
+      <PageHeader title="Our picks" subtitle="Curated buckets readers see on Discover">
+        <Button onClick={() => setModal({})}>New curated bucket</Button>
+      </PageHeader>
 
-      {/* Create form */}
-      {showCreateForm && (
-        <div className="mb-6 bg-white rounded-xl shadow-md border border-gray-100 p-5">
-          <h2 className="text-sm font-semibold text-gray-700 mb-4">New Curated Bucket</h2>
-          <form onSubmit={handleCreate}>
-            <div className="flex items-center gap-3 mb-4">
-              <input
-                type="text"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                maxLength={100}
-                placeholder="Title (e.g. Staff Picks, New Arrivals)"
-                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                autoFocus
-              />
-              <div className="flex flex-col items-center">
-                <label className="text-[10px] text-gray-400 mb-0.5 font-medium uppercase tracking-wide">Order</label>
-                <input
-                  type="number"
-                  value={newSortOrder}
-                  onChange={(e) => setNewSortOrder(parseInt(e.target.value) || 0)}
-                  className="w-16 border border-gray-300 rounded-lg px-2 py-2 text-sm text-gray-900 bg-white text-center focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                />
-              </div>
-            </div>
+      <Banner message={banner} onDismiss={() => setBanner('')} />
 
-            {/* Book picker */}
-            <div className="border border-gray-200 rounded-lg overflow-hidden mb-4">
-              <div className="flex items-center justify-between px-3 py-2 bg-gray-50 border-b border-gray-200">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-gray-600">Add Books</span>
-                  {newBookIds.length > 0 && (
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 text-indigo-700">
-                      {newBookIds.length} selected
-                    </span>
-                  )}
-                </div>
-                <input
-                  type="text"
-                  value={newBookSearch}
-                  onChange={(e) => setNewBookSearch(e.target.value)}
-                  placeholder="Search books..."
-                  className="border border-gray-300 rounded-md px-2 py-1 text-xs text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 w-44"
-                />
-              </div>
-              <div className="max-h-48 overflow-y-auto">
-                {allBooks
-                  .filter((b) => newBookSearch === '' || b.title.toLowerCase().includes(newBookSearch.toLowerCase()))
-                  .map((book) => {
-                    const selected = newBookIds.includes(book.id);
-                    return (
-                      <div
-                        key={book.id}
-                        className={`flex items-center gap-3 py-2 px-3 cursor-pointer transition-colors border-b border-gray-100 last:border-0 ${selected ? 'bg-indigo-50' : 'hover:bg-gray-50'}`}
-                        onClick={() =>
-                          setNewBookIds((prev) =>
-                            selected ? prev.filter((id) => id !== book.id) : [...prev, book.id]
-                          )
-                        }
-                      >
-                        <input
-                          type="checkbox"
-                          readOnly
-                          checked={selected}
-                          className="accent-indigo-600 shrink-0 w-4 h-4 pointer-events-none"
-                        />
-                        {book.cover_image_url ? (
-                          <img src={book.cover_image_url} alt="" className="w-7 h-10 object-cover rounded shadow-sm shrink-0" />
-                        ) : (
-                          <div className="w-7 h-10 bg-gray-100 rounded shrink-0" />
-                        )}
-                        <span className="text-xs text-gray-800 line-clamp-1 flex-1">{book.title}</span>
-                      </div>
-                    );
-                  })}
-                {allBooks.length === 0 && (
-                  <p className="text-xs text-gray-400 py-4 text-center">No books available</p>
-                )}
-              </div>
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                type="submit"
-                disabled={creating || !newTitle.trim()}
-                className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors shadow-sm"
-              >
-                {creating ? 'Creating...' : `Create${newBookIds.length > 0 ? ` with ${newBookIds.length} book${newBookIds.length !== 1 ? 's' : ''}` : ''}`}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowCreateForm(false)}
-                className="px-4 py-2 bg-white text-gray-700 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* Bucket list */}
-      {buckets.length === 0 ? (
-        <div className="bg-white rounded-xl border-2 border-dashed border-gray-200 p-12 text-center">
-          <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center mx-auto mb-3">
-            <svg className="w-6 h-6 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-            </svg>
-          </div>
-          <p className="text-gray-700 font-medium">No curated buckets yet</p>
-          <p className="text-sm text-gray-400 mt-1">Click &ldquo;New Pick&rdquo; to create your first one.</p>
-        </div>
+      {error ? (
+        <Banner message="Couldn't load curated buckets." onRetry={refetch} />
+      ) : isLoading ? (
+        <Loading />
       ) : (
-        <div className="space-y-3">
-          {buckets.map((bucket) => (
-            <div
-              key={bucket.id}
-              className={`bg-white rounded-xl shadow-sm border overflow-hidden transition-colors ${
-                bucket.is_active ? 'border-l-4 border-l-green-400 border-gray-100' : 'border-gray-200'
-              }`}
-            >
-              {/* Bucket row */}
-              <div className="flex items-center gap-4 px-5 py-3.5">
-                {/* Sort order badge */}
-                <span className="flex-shrink-0 w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center">
-                  {bucket.sort_order}
-                </span>
-
-                {/* Title / edit */}
-                <div className="flex-1 min-w-0">
-                  {editing?.id === bucket.id ? (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={editing.title}
-                        onChange={(e) => setEditing({ ...editing, title: e.target.value })}
-                        maxLength={100}
-                        className="flex-1 border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        autoFocus
-                        onKeyDown={(e) => { if (e.key === 'Enter') handleEditSave(); if (e.key === 'Escape') setEditing(null); }}
-                      />
-                      <input
-                        type="number"
-                        value={editing.sort_order}
-                        onChange={(e) => setEditing({ ...editing, sort_order: parseInt(e.target.value) || 0 })}
-                        className="w-14 border border-gray-300 rounded-lg px-2 py-1 text-sm text-gray-900 bg-white text-center focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      />
-                      <button onClick={handleEditSave} disabled={savingEdit} className="px-2.5 py-1 bg-indigo-600 text-white text-xs font-medium rounded-md hover:bg-indigo-700 disabled:opacity-50">Save</button>
-                      <button onClick={() => setEditing(null)} className="px-2.5 py-1 bg-gray-100 text-gray-600 text-xs font-medium rounded-md hover:bg-gray-200">Cancel</button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="font-semibold text-gray-800 truncate">{bucket.title}</span>
-                      <span className="flex-shrink-0 text-xs text-gray-400 tabular-nums">{bucket.book_count ?? 0} books</span>
-                      {bucket.books_preview?.length > 0 && (
-                        <div className="flex -space-x-1.5 flex-shrink-0">
-                          {bucket.books_preview.slice(0, 4).map((b) => (
-                            <img
-                              key={b.book_id}
-                              src={b.cover_image_url}
-                              alt={b.title}
-                              className="w-5 h-7 object-cover rounded shadow-sm ring-1 ring-white"
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Active toggle */}
-                <button
-                  onClick={() => handleToggleActive(bucket)}
-                  title={bucket.is_active ? 'Active — click to deactivate' : 'Inactive — click to activate'}
-                  className={`relative flex-shrink-0 inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-                    bucket.is_active ? 'bg-green-400' : 'bg-gray-300'
-                  }`}
-                >
-                  <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
-                    bucket.is_active ? 'translate-x-[19px]' : 'translate-x-[2px]'
-                  }`} />
-                </button>
-
-                {/* Actions */}
-                <div className="flex-shrink-0 flex items-center gap-1">
-                  <button
-                    onClick={() => managingBucketId === bucket.id ? setManagingBucketId(null) : openManageBooks(bucket.id)}
-                    className="px-2.5 py-1.5 rounded-md text-xs font-medium text-indigo-600 hover:bg-indigo-50 transition-colors"
-                  >
-                    {managingBucketId === bucket.id ? 'Hide Books' : 'Manage Books'}
-                  </button>
-                  <button
-                    onClick={() => setEditing({ id: bucket.id, title: bucket.title, sort_order: bucket.sort_order, is_active: bucket.is_active })}
-                    className="px-2.5 py-1.5 rounded-md text-xs font-medium text-gray-600 hover:bg-gray-100 transition-colors"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => handleDelete(bucket.id)}
-                    disabled={deletingId === bucket.id}
-                    className="px-2.5 py-1.5 rounded-md text-xs font-medium text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
-                  >
-                    {deletingId === bucket.id ? 'Deleting…' : 'Delete'}
-                  </button>
-                </div>
-              </div>
-
-              {/* Book manager panel */}
-              {managingBucketId === bucket.id && (
-                <div className="border-t border-gray-100 bg-gray-50 px-5 py-4">
-                  <div className="flex gap-6">
-                    {/* Current books */}
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">In this bucket</h4>
-                      {loadingBooks ? (
-                        <div className="flex items-center gap-2 text-sm text-gray-400 py-2">
-                          <svg className="animate-spin h-4 w-4 text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                          </svg>
-                          Loading…
-                        </div>
-                      ) : bucketBooks.length === 0 ? (
-                        <p className="text-sm text-gray-400 py-2">No books yet. Add from the right.</p>
-                      ) : (
-                        <ul className="space-y-1.5 max-h-60 overflow-y-auto">
-                          {bucketBooks.map((b) => (
-                            <li key={b.book_id} className="flex items-center gap-3 bg-white rounded-lg px-3 py-2 shadow-sm border border-gray-100">
-                              <img
-                                src={b.cover_image_url || `https://placehold.co/40x56/6366F1/FFFFFF?text=...`}
-                                alt={b.title}
-                                className="w-7 h-10 object-cover rounded shadow-sm"
-                              />
-                              <span className="flex-1 text-sm text-gray-800 truncate">{b.title}</span>
-                              <button
-                                onClick={() => handleRemoveBook(b.book_id)}
-                                disabled={removingBookId === b.book_id}
-                                className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40 text-sm"
-                                title="Remove"
-                              >
-                                ✕
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-
-                    {/* Divider */}
-                    <div className="w-px bg-gray-200" />
-
-                    {/* Add books */}
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Add books</h4>
-                      <input
-                        type="text"
-                        value={bookSearch}
-                        onChange={(e) => setBookSearch(e.target.value)}
-                        placeholder="Search books..."
-                        className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-gray-900 bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 mb-2"
-                      />
-                      {filteredAllBooks.length === 0 ? (
-                        <p className="text-sm text-gray-400 py-2">All books are already in this bucket.</p>
-                      ) : (
-                        <ul className="space-y-1.5 max-h-60 overflow-y-auto">
-                          {filteredAllBooks.map((b) => (
-                            <li key={b.id} className="flex items-center gap-3 bg-white rounded-lg px-3 py-2 shadow-sm border border-gray-100">
-                              <img
-                                src={b.cover_image_url || `https://placehold.co/40x56/6366F1/FFFFFF?text=...`}
-                                alt={b.title}
-                                className="w-7 h-10 object-cover rounded shadow-sm"
-                              />
-                              <span className="flex-1 text-sm text-gray-800 truncate">{b.title}</span>
-                              <button
-                                onClick={() => handleAddBook(b.book_id)}
-                                disabled={addingBookId === b.book_id}
-                                className="flex-shrink-0 px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-600 hover:bg-indigo-100 text-xs font-semibold transition-colors disabled:opacity-50"
-                              >
-                                {addingBookId === b.book_id ? '…' : '+ Add'}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
+        <div className="flex flex-col gap-3">
+          {sorted.map((bucket) => {
+            const open = managingId === bucket.id;
+            return (
+              <Card key={bucket.id} className="px-[18px] py-4">
+                <div className="flex flex-wrap items-center gap-4">
+                  <CoverStack books={bucket.books_preview} />
+                  <div className="flex-1 min-w-[180px] flex flex-col gap-1">
+                    <Eyebrow className={bucket.is_active ? 'text-gold!' : ''}>{bucket.is_active ? 'Featured' : 'Hidden'} · #{bucket.sort_order}</Eyebrow>
+                    <span className="text-sm leading-[1.3] font-extrabold text-ink-title truncate">{bucket.title}</span>
+                    <span className="text-xs font-semibold text-ink-meta">{plural(bucket.book_count ?? 0, 'book')}</span>
+                  </div>
+                  <Toggle
+                    on={bucket.is_active}
+                    label={`Feature "${bucket.title}" on Discover`}
+                    disabled={togglingId === bucket.id}
+                    onChange={() => toggleActive(bucket)}
+                  />
+                  <div className="flex items-center gap-4">
+                    <TextAction onClick={() => setManagingId(open ? null : bucket.id)}>{open ? 'Hide books' : 'Books'}</TextAction>
+                    <TextAction tone="muted" onClick={() => setModal({ bucket })}>Edit</TextAction>
+                    <TextAction tone="muted" onClick={() => remove(bucket)}>Delete</TextAction>
                   </div>
                 </div>
-              )}
-            </div>
-          ))}
+                {open && <BucketBooksPanel bucket={bucket} allBooks={allBooks} onError={setBanner} />}
+              </Card>
+            );
+          })}
+          <CreateSlot label={sorted.length ? 'New curated bucket' : 'Create the first curated bucket'} onClick={() => setModal({})} />
         </div>
       )}
-    </div>
+
+      {modal && (
+        <BucketModal
+          bucket={modal.bucket}
+          nextOrder={nextOrder}
+          allBooks={allBooks}
+          onClose={() => setModal(null)}
+          onSaved={onSaved}
+        />
+      )}
+    </>
   );
 };
 

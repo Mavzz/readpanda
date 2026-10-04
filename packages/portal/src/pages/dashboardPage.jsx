@@ -1,61 +1,93 @@
-import React, { useState, useEffect } from 'react';
-import { StatCard } from "../components/cards";
-import { BookIcon } from "../components/icons";
-import { useGet } from "../services/useGet";
-import { getBackendUrl } from "../utils/Helper";
+import { useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Banner, Button, Card, Cover, CoverStack, CreateSlot, EmptyState, Eyebrow, PageHeader, SearchInput, Section } from '../components/ui';
+import { formatCount, useAllBooks, useOurPicks, useUserCount } from '../services/queries';
+
+const RECENT_LIMIT = 10;
+const PICKS_LIMIT = 3;
+
+const Stat = ({ label, value }) => (
+  <Card className="flex flex-col gap-2">
+    <Eyebrow>{label}</Eyebrow>
+    <span className="text-[30px] leading-none font-extrabold tracking-[-0.5px] text-ink-title">{value}</span>
+  </Card>
+);
 
 const DashboardPage = () => {
-  const [totalBooks, setTotalBooks] = useState('–');
-  const [totalUsers, setTotalUsers] = useState('–');
-  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+  const [query, setQuery] = useState('');
+  const books = useAllBooks();
+  const picks = useOurPicks();
+  const users = useUserCount();
 
-  useEffect(() => {
-    const fetchStats = async () => {
-      const headers = { Authorization: `Bearer ${localStorage.getItem('token')}` };
-      try {
-        const [booksRes, usersRes] = await Promise.all([
-          useGet(await getBackendUrl('/books/all'), headers),
-          useGet(await getBackendUrl('/users'), headers),
-        ]);
-        setTotalBooks(booksRes.response.books?.length ?? '–');
-        setTotalUsers(usersRes.response.users?.length ?? '–');
-      } catch {
-        // stats remain as '–'
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchStats();
-  }, []);
+  const allBooks = books.data ?? [];
+  const recent = [...allBooks].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, RECENT_LIMIT);
+  const buckets = picks.data ?? [];
+  const totalViews = allBooks.reduce((sum, b) => sum + (b.views || 0), 0);
+  const dash = (q) => (q.isLoading ? '…' : q.isError ? '–' : null);
+
+  const failed = books.error || picks.error;
 
   return (
-    <div>
-      <h1 className="text-3xl font-bold text-gray-800 mb-6">Admin Dashboard</h1>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <StatCard
-          title="Total Books"
-          value={loading ? '…' : totalBooks}
-          icon={<BookIcon />}
+    <>
+      <PageHeader title="Dashboard">
+        <form onSubmit={(e) => { e.preventDefault(); navigate(`/all-books?q=${encodeURIComponent(query.trim())}`); }}>
+          <SearchInput value={query} onChange={setQuery} placeholder="Search books by title or author" className="w-[300px] max-w-full bg-surface-1!" />
+        </form>
+        <Button onClick={() => navigate('/upload')}>Upload book</Button>
+      </PageHeader>
+
+      {failed && (
+        <Banner
+          message="Couldn't load everything on the dashboard."
+          onRetry={() => { books.refetch(); picks.refetch(); users.refetch(); }}
         />
-        <StatCard
-          title="Total Users"
-          value={loading ? '…' : totalUsers}
-          icon={<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>}
-        />
-        <StatCard
-          title="Total Views"
-          value="29.2k"
-          icon={<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>}
-          change="+15% this month"
-        />
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Stat label="Books" value={dash(books) ?? formatCount(allBooks.length)} />
+        <Stat label="Readers" value={dash(users) ?? formatCount(users.data)} />
+        <Stat label="Views" value={dash(books) ?? formatCount(totalViews)} />
       </div>
-      <div className="mt-8 bg-white p-6 rounded-lg shadow-md">
-        <h2 className="text-xl font-bold text-gray-700 mb-4">Views This Year</h2>
-        <div className="h-64 bg-gray-100 rounded-md flex items-center justify-center">
-          <p className="text-gray-500">[Chart Data Would Be Visualized Here]</p>
+
+      <Section title="Recently uploaded" seeAllTo={allBooks.length > RECENT_LIMIT ? '/all-books' : null}>
+        {!books.isLoading && recent.length === 0 ? (
+          <EmptyState title="No books yet" body="Upload the first one and it shows up here." action={<Button onClick={() => navigate('/upload')}>Upload book</Button>} />
+        ) : (
+          // Rows bleed off the right edge.
+          <div className="flex gap-4 overflow-x-auto -mr-6 lg:-mr-8 pr-6 lg:pr-8 pb-1">
+            {recent.map((b) => (
+              <Link key={b.id} to={`/all-books?q=${encodeURIComponent(b.title)}`} className="w-28 shrink-0 flex flex-col gap-2 no-underline">
+                <Cover src={b.cover_image_url} title={b.title} className="w-28 h-[168px] rounded-cover" />
+                <span className="text-[13px] leading-[1.3] font-extrabold text-ink-title truncate">{b.title}</span>
+              </Link>
+            ))}
+          </div>
+        )}
+      </Section>
+
+      <Section title={`Our picks · ${buckets.length}`} seeAllTo={buckets.length > PICKS_LIMIT ? '/our-picks' : null}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {buckets.slice(0, PICKS_LIMIT).map((bucket) => (
+            <Link
+              key={bucket.id}
+              to="/our-picks"
+              className="rounded-card px-[18px] py-4 flex items-center gap-4 no-underline bg-[linear-gradient(135deg,#2a2418,#1a1810)]"
+            >
+              <CoverStack books={bucket.books_preview} />
+              <div className="flex flex-col gap-1 min-w-0">
+                <Eyebrow className="text-gold!">Curated</Eyebrow>
+                <span className="text-sm leading-[1.3] font-extrabold text-ink-title truncate">{bucket.title}</span>
+                <span className="text-xs font-semibold text-ink-meta">
+                  {bucket.book_count ?? 0} {bucket.book_count === 1 ? 'book' : 'books'} · {bucket.is_active ? 'featured' : 'hidden'}
+                </span>
+              </div>
+            </Link>
+          ))}
+          <CreateSlot label="New curated bucket" onClick={() => navigate('/our-picks?new=1')} />
         </div>
-      </div>
-    </div>
+      </Section>
+    </>
   );
 };
 

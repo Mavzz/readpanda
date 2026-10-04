@@ -38,6 +38,16 @@ Authorization: Bearer <access_token>
 | GET | `/books` | Yes | Get all books for the authenticated user. Returns `{ books: [...] }`. |
 | GET | `/books/all` | Yes | Get all books in the system. Returns `{ books: [...] }`. |
 | POST | `/books/seed` | Yes | Seed books from object storage (R2/MinIO). Scans the storage bucket and inserts missing books into the database. |
+| GET | `/books/{bookId}` | Yes | Book detail (8c). Returns `{ book: { book_id, title, description, author_name, page_count, genre, subgenre, cover_image_url, manuscript_url }, in_buckets: [bucketId], friends_read: { count, friends: [{ user_id, username }] } }`. `in_buckets` lists the caller's own buckets holding the book. `friends_read` counts room-mates (anyone sharing a room with the caller) with a reading position in the book, naming the 3 most recent. `author_name` / `page_count` are null when unknown. |
+
+---
+
+## Discover
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| POST | `/admin/books/enrich?limit=50&recheck=false` | Admin | Run the book metadata lookup now (Open Library, then Google Books) over books not yet checked: readable title from the file name, then title/author/page count from the lookup. Also runs at startup and after a seed or upload. `recheck=true` re-queues every book. Returns `{ checked, resolved }`. Set `METADATA_LOOKUP=off` to skip the network. |
+| GET | `/discover?genre={subgenre}` | Yes | Discover tab (8a). Returns `{ genre, genres: [{ value, label, liked }], curated: [CuratedBucket], popular: [{ ...book, added_at, readers_this_week, friends_read }] }` (`added_at` is the book's catalogue date, for See all's Newest sort). Without `genre` this is the **For you** feed: curated buckets ranked by how many of their books are in the caller's liked subgenres, and Popular ranked by readers in the last 7 days + 2× room-mates who've read it + 3 if the book is in a liked subgenre. With `genre`, both sections are filtered to that subgenre and Popular is ranked by readers this week. `genres` lists the caller's liked subgenres first, then every other subgenre with at least one book. Requires `scripts/migrate_discover.sql`. |
 
 ---
 
@@ -97,6 +107,7 @@ Users can create up to **20 personal buckets** to organize books.
 | DELETE | `/users/me/buckets/{id}` | Yes | Delete a bucket and its book associations. |
 | POST | `/users/me/buckets/{id}/books` | Yes | Add books to a bucket. Body: `{ book_ids: int[] }`. |
 | DELETE | `/users/me/buckets/{id}/books/{bookId}` | Yes | Remove a single book from a bucket. |
+| PUT | `/users/me/buckets/{id}/order` | Yes | Save a bucket's manual order (9a edit mode). Body: `{ book_ids: [...] }`. Unlisted books keep their relative order after the listed ones. Returns 204. |
 
 ---
 
@@ -218,3 +229,17 @@ internal/database/           — PostgreSQL connection
 internal/notify/             — Inbox writes + push fan-out
 internal/utils/              — JWT, hashing, Firebase (storage, FCM), R2 storage helpers
 ```
+
+---
+
+## Bucket screens (9a / 9b)
+
+Requires `scripts/migrate_buckets_9.sql`.
+
+- `GET /users/me/buckets` — each bucket now also has `finished_count`, `source_curated_id`, and up to 3 `books_preview` covers in the bucket's manual order, and `updated_at` (the latest of creation, rename, or a book added; See all's Updated sort).
+- `GET /users/me/buckets/{id}/books` — `{ id, name, source_curated_id, books: [{ book_id, title, author_name, cover_image_url, manuscript_url, subgenre, page_count, progress }] }` in manual order. `progress` is the caller's `{ current_page, total_pages, progress_pct, last_read_at }` or null.
+- `POST /users/me/buckets` — also accepts `{ source_curated_id }` ("Save to My Books"): copies the curated bucket's books and order. Saving again returns the existing copy with `existing: true` (200).
+- `GET /home/our-picks` and `/discover` curated items — add `description`, `genre_tags`, `reading_minutes` (1.5 min/page; null unless every book's length is known), `saved_bucket_id`, and under a genre filter `matching_count`.
+- `GET /home/our-picks/{bucketId}/books` — `{ id, title, description, genre_tags, book_count, reading_minutes, saved_bucket_id, books: [...] }`, books shaped as above.
+
+**Genre tags.** A curated bucket's `genre_tags` are the editor's (`curated_buckets.genre_tags`) when set; otherwise any subgenre that at least 2 books, or at least 40% of the books, share. Under `/discover?genre=X`, a bucket shows if tagged X, ranked by the share of its books in X.

@@ -33,6 +33,8 @@ type Book struct {
 	Description   string    `json:"description"`
 	Subgenre      string    `json:"subgenre"`
 	Genre         string    `json:"genre"`
+	AuthorName    *string   `json:"author_name,omitempty"`
+	PageCount     *int      `json:"page_count,omitempty"`
 	CoverImageURL *string   `json:"cover_image_url,omitempty"`
 	ManuscriptURL *string   `json:"manuscript_url,omitempty"`
 	Status        int       `json:"status"`
@@ -85,6 +87,18 @@ type CuratedBucket struct {
 	CoverImageURL *string       `json:"cover_image_url"`
 	BookCount     int           `json:"book_count"`
 	BooksPreview  []BookPreview `json:"books_preview"`
+	// 9b's editorial line. Null until written in the CMS.
+	Description *string `json:"description"`
+	// Editor tags, or derived from the books when there are none — see
+	// handlers/curated.go.
+	GenreTags []string `json:"genre_tags"`
+	// Only under a genre filter: how many of the books are in that genre, for
+	// the tile's "{m} of {n} are {Genre}".
+	MatchingCount *int `json:"matching_count,omitempty"`
+	// "~{hrs} hrs" at 1.5 min/page. Null unless every book's length is known.
+	ReadingMinutes *int `json:"reading_minutes"`
+	// The caller's "Save to My Books" copy, if they've saved this bucket.
+	SavedBucketID *string `json:"saved_bucket_id"`
 }
 
 // BookPreview is a minimal book representation for bucket previews
@@ -122,6 +136,53 @@ type UserBucket struct {
 	BookCount    int           `json:"book_count,omitempty"`
 	BooksPreview []BookPreview `json:"books_preview,omitempty"`
 	CreatedAt    time.Time     `json:"created_at"`
+	// The last rename or book added — "See all"'s Updated sort (10e).
+	UpdatedAt time.Time `json:"updated_at"`
+	// Books the owner has read to the end — 9c's "{f}/{n}".
+	FinishedCount int `json:"finished_count"`
+	// Set when this bucket is a saved copy of a curated one.
+	SourceCuratedID *string `json:"source_curated_id"`
+}
+
+// BookProgress is the caller's own position in a book, for the bucket
+// screens' status labels and badges.
+type BookProgress struct {
+	CurrentPage int       `json:"current_page"`
+	TotalPages  int       `json:"total_pages"`
+	ProgressPct int       `json:"progress_pct"`
+	LastReadAt  time.Time `json:"last_read_at"`
+}
+
+// BucketBook is one book on a bucket screen (9a list row, 9b grid cell).
+type BucketBook struct {
+	BookID        string        `json:"book_id"`
+	Title         string        `json:"title"`
+	AuthorName    *string       `json:"author_name"`
+	CoverImageURL *string       `json:"cover_image_url"`
+	ManuscriptURL *string       `json:"manuscript_url"`
+	Subgenre      string        `json:"subgenre"`
+	PageCount     *int          `json:"page_count"`
+	Progress      *BookProgress `json:"progress"`
+}
+
+// UserBucketPage is GET /users/me/buckets/{id}/books.
+type UserBucketPage struct {
+	ID              string       `json:"id"`
+	Name            string       `json:"name"`
+	SourceCuratedID *string      `json:"source_curated_id"`
+	Books           []BucketBook `json:"books"`
+}
+
+// CuratedBucketPage is GET /home/our-picks/{bucketId}/books.
+type CuratedBucketPage struct {
+	ID             string       `json:"id"`
+	Title          string       `json:"title"`
+	Description    *string      `json:"description"`
+	GenreTags      []string     `json:"genre_tags"`
+	BookCount      int          `json:"book_count"`
+	ReadingMinutes *int         `json:"reading_minutes"`
+	SavedBucketID  *string      `json:"saved_bucket_id"`
+	Books          []BucketBook `json:"books"`
 }
 
 // Room represents a reading room
@@ -363,4 +424,66 @@ type BookHighlight struct {
 	FileHash     string          `json:"file_hash"`
 	ClientID     string          `json:"client_id,omitempty"`
 	CreatedAt    time.Time       `json:"created_at"`
+}
+
+// ── Discover (8a) and Book detail (8c) ──────────────────────
+
+// DiscoverGenre is one chip in Discover's genre row. Liked marks the ones
+// seeded from the reader's Genres I like.
+type DiscoverGenre struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+	Liked bool   `json:"liked"`
+}
+
+// CatalogBook is a book as Discover and Book detail render it. AuthorName and
+// PageCount are null until the catalogue knows them.
+type CatalogBook struct {
+	BookID        string  `json:"book_id"`
+	Title         string  `json:"title"`
+	Description   string  `json:"description,omitempty"`
+	AuthorName    *string `json:"author_name"`
+	PageCount     *int    `json:"page_count"`
+	Genre         string  `json:"genre"`
+	Subgenre      string  `json:"subgenre"`
+	CoverImageURL *string `json:"cover_image_url"`
+	ManuscriptURL *string `json:"manuscript_url"`
+}
+
+// PopularBook is one cover in Discover's Popular row, with the two signals it
+// was ranked on.
+type PopularBook struct {
+	CatalogBook
+	// When the book joined the catalogue — "See all"'s Newest sort (10c).
+	AddedAt         time.Time `json:"added_at"`
+	ReadersThisWeek int       `json:"readers_this_week"`
+	FriendsRead     int       `json:"friends_read"`
+}
+
+// DiscoverResponse is GET /discover. Genre is null on the For you feed.
+type DiscoverResponse struct {
+	Genre   *string         `json:"genre"`
+	Genres  []DiscoverGenre `json:"genres"`
+	Curated []CuratedBucket `json:"curated"`
+	Popular []PopularBook   `json:"popular"`
+}
+
+// FriendReader is one avatar on Book detail's social line.
+type FriendReader struct {
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+}
+
+// FriendsRead is how many room-mates have a position in a book, and the most
+// recent few of them by name.
+type FriendsRead struct {
+	Count   int            `json:"count"`
+	Friends []FriendReader `json:"friends"`
+}
+
+// BookDetail is GET /books/{bookId}.
+type BookDetail struct {
+	Book        CatalogBook `json:"book"`
+	InBuckets   []string    `json:"in_buckets"`
+	FriendsRead FriendsRead `json:"friends_read"`
 }
