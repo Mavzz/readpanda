@@ -312,8 +312,10 @@ var running sync.Mutex
 
 // EnrichPending looks up every book the job hasn't checked yet, at most
 // `limit` of them (0 = all), and caches what it finds. A book is always given
-// at least its humanized title. Only one run happens at a time; a call while
-// another is running returns immediately with ran=false.
+// at least its humanized title — unless someone uploaded it: an uploader
+// typed the title, so only seeded books (no user_id) have theirs replaced.
+// Only one run happens at a time; a call while another is running returns
+// immediately with ran=false.
 //
 // Set METADATA_LOOKUP=off to skip the network (the humanized title is still
 // written).
@@ -373,7 +375,8 @@ func EnrichPending(ctx context.Context, limit int) (checked, resolved int, ran b
 				// but it still gets its readable title now.
 				log.Printf("metadata: lookup failed for %s (%q): %v", p.id, title, err)
 				if _, err := database.DB.ExecContext(ctx,
-					`UPDATE books SET source_title = COALESCE(source_title, title), title = $2
+					`UPDATE books SET source_title = COALESCE(source_title, title),
+					        title = CASE WHEN user_id IS NULL THEN $2 ELSE title END
 					  WHERE book_id = $1`,
 					p.id, title,
 				); err != nil {
@@ -402,7 +405,7 @@ func EnrichPending(ctx context.Context, limit int) (checked, resolved int, ran b
 		if _, err := database.DB.ExecContext(ctx,
 			`UPDATE books
 			    SET source_title = COALESCE(source_title, title),
-			        title = $2,
+			        title = CASE WHEN user_id IS NULL THEN $2 ELSE title END,
 			        author_from_lookup = author_from_lookup OR (author_name IS NULL AND $3::text IS NOT NULL),
 			        author_name = COALESCE(author_name, $3),
 			        pages_from_lookup = pages_from_lookup OR (page_count IS NULL AND $4::int IS NOT NULL),

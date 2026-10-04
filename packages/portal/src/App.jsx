@@ -7,6 +7,7 @@ import LoginPage from './pages/loginPage';
 import DashboardPage from './pages/dashboardPage';
 import MyBooksPage from './pages/myBooksPage';
 import UploadBookPage from './pages/uploadBookPage';
+import BulkUploadPage from './pages/bulkUploadPage';
 import MyBucketsPage from './pages/myBucketsPage';
 import SignUpPage from './pages/signUpPage';
 import OurPicksPage from './pages/ourPicksPage';
@@ -22,6 +23,7 @@ const NAV = [
   { to: '/our-picks', label: 'Our picks', Icon: SparklesIcon },
   { to: '/my-buckets', label: 'Buckets', Icon: FolderIcon },
   { to: '/upload', label: 'Upload book', Icon: UploadIcon },
+  { to: '/bulk-upload', label: 'Bulk upload', Icon: FolderIcon },
   { to: '/users', label: 'Users', Icon: UsersIcon },
   { to: '/database', label: 'Database', Icon: DatabaseIcon },
 ];
@@ -144,6 +146,7 @@ export default function App() {
         <Route path="/our-picks" element={<OurPicksPage />} />
         <Route path="/my-buckets" element={<MyBucketsPage />} />
         <Route path="/upload" element={<UploadBookPage />} />
+        <Route path="/bulk-upload" element={<BulkUploadPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/users/:uuid" element={<UserDetailPage />} />
         <Route path="/database" element={<DatabasePage />} />

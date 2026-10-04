@@ -60,12 +60,20 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 	genre := r.FormValue("genre")
 	subgenre := r.FormValue("subgenre")
 	authorName := strings.TrimSpace(r.FormValue("author_name"))
+	// The portal's bulk upload sends notify=false so a batch of test books
+	// doesn't send every reader one notification per book.
+	notifyReaders := r.FormValue("notify") != "false"
 
 	claims, err := utils.DecodeToken(token, h.Config.JWTSecret)
 	if err != nil {
 		http.Error(w, `{"error": "Invalid token"}`, http.StatusUnauthorized)
 		return
 	}
+
+	// Storage keys carry the book id: uploads routinely share file names
+	// ("cover.jpeg" from an EPUB), and a shared key would overwrite the
+	// other book's file.
+	bookID := "bk_" + uuid.New().String()[:8]
 
 	var coverLink, manuscriptLink *string
 
@@ -79,7 +87,7 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		coverPath := fmt.Sprintf("books/covers/%s", coverHeader.Filename)
+		coverPath := fmt.Sprintf("books/covers/%s-%s", bookID, coverHeader.Filename)
 		url, err := utils.UploadFileToStorage(coverData, coverHeader.Header.Get("Content-Type"), coverPath)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to upload cover: `+err.Error()+`"}`, http.StatusInternalServerError)
@@ -98,7 +106,7 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		manuscriptPath := fmt.Sprintf("books/manuscripts/%s", manuscriptHeader.Filename)
+		manuscriptPath := fmt.Sprintf("books/manuscripts/%s-%s", bookID, manuscriptHeader.Filename)
 		url, err := utils.UploadFileToStorage(manuscriptData, manuscriptHeader.Header.Get("Content-Type"), manuscriptPath)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to upload manuscript: `+err.Error()+`"}`, http.StatusInternalServerError)
@@ -112,7 +120,6 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bookID := "bk_" + uuid.New().String()[:8]
 	// Insert book into database
 	_, err = database.DB.Exec(
 		"INSERT INTO books (book_id, title, description, subgenre, genre, author_name, cover_image_url, manuscript_url, status, views, user_id) VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8, $9, $10, $11)",
@@ -126,7 +133,7 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 	// Tell every other reader. Only once there is a manuscript: a NEW_BOOK
 	// notification opens the reader, and a cover alone has nothing to open.
 	// A failure here costs the announcement, not the upload.
-	if manuscriptLink != nil {
+	if manuscriptLink != nil && notifyReaders {
 		displayTitle := strings.TrimSpace(title)
 		if displayTitle == "" {
 			displayTitle = "A new book"
