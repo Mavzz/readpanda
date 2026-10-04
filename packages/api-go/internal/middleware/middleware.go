@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Mavzz/readpanda/api-go/internal/utils"
 )
@@ -26,11 +27,51 @@ func CORS(next http.Handler) http.Handler {
 	})
 }
 
-// Logging middleware to log incoming requests
+// maxLoggedErrorBody caps how much of a failed response is copied into the log.
+const maxLoggedErrorBody = 1024
+
+// statusRecorder remembers the status a handler wrote, and for server errors
+// the start of the body — handlers put the real cause there (`{"error": ...}`)
+// without logging it themselves.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+	body   []byte
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	if s.status == 0 {
+		s.status = http.StatusOK
+	}
+	if s.status >= 500 && len(s.body) < maxLoggedErrorBody {
+		s.body = append(s.body, b[:min(len(b), maxLoggedErrorBody-len(s.body))]...)
+	}
+	return s.ResponseWriter.Write(b)
+}
+
+// Logging logs each request once it completes, with its status and duration.
+// Server errors are logged with the error the handler returned, so a 500 shows
+// its cause in Cloud Run's logs, not only in the client's response.
 func Logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Incoming %s request to %s", r.Method, r.URL.Path)
-		next.ServeHTTP(w, r)
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(rec, r)
+
+		if rec.status == 0 {
+			rec.status = http.StatusOK
+		}
+		elapsed := time.Since(start).Round(time.Millisecond)
+		if rec.status >= 500 {
+			log.Printf("ERROR %s %s -> %d (%s): %s", r.Method, r.URL.Path, rec.status, elapsed, strings.TrimSpace(string(rec.body)))
+			return
+		}
+		log.Printf("%s %s -> %d (%s)", r.Method, r.URL.Path, rec.status, elapsed)
 	})
 }
 

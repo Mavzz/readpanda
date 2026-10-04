@@ -1,288 +1,103 @@
-import React, { useState } from "react";
-import { usePost as UsePOST } from "../services/usePost";
-import { useGet as UseGET } from "../services/useGet";
-import { getBackendUrl, encryptedPassword } from "../utils/Helper";
-import { GoogleLogin } from "@react-oauth/google"; // Import GoogleLogin component
-import { useNavigate } from 'react-router-dom'; // Import useNavigate
+import { useState } from "react";
+import { GoogleLogin } from "@react-oauth/google";
+import { useNavigate } from "react-router-dom";
+import AuthShell from "../components/AuthShell";
+import { Button, Field, TextAction } from "../components/ui";
+import { api } from "../services/api";
+import { encryptedPassword } from "../utils/Helper";
+import { startSession } from "../utils/session";
+
+const LOGIN_TIMEOUT_MS = 10000;
+
+const loginErrorMessage = (err) => {
+  if (err.name === "AbortError") return "Sign in timed out. Check the API is running and try again.";
+  if (err.status === 401 || err.status === 404) return "That username and password don't match.";
+  if (err.status === 403) return "This account isn't an admin.";
+  return "Couldn't reach the server. Check your connection and try again.";
+};
 
 const LoginPage = ({ setIsLoggedIn, onSwitchToSignUp }) => {
   const [loading, setLoading] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState(""); // State for error messages
-  const navigate = useNavigate(); // Hook for programmatic navigation
-  
-  // Define a timeout duration (e.g., 10 seconds)
-  const LOGIN_TIMEOUT_MS = 10000;
+  const [error, setError] = useState("");
+  const navigate = useNavigate();
+
+  const finish = async (auth) => {
+    await startSession(auth);
+    setIsLoggedIn(true);
+    navigate("/dashboard");
+  };
 
   const handleLogin = async () => {
-    // Clear previous errors
     setError("");
-
     if (!username || !password) {
-      setError("Please enter both username and password.");
-      console.warn("Login attempt with empty username or password");
+      setError("Enter your username and password.");
       return;
     }
 
     setLoading(true);
-    let timeoutId; // To store the timeout ID
-
-    // Create an AbortController instance for this request
     const controller = new AbortController();
-    const signal = controller.signal;
-
+    const timeoutId = setTimeout(() => controller.abort(), LOGIN_TIMEOUT_MS);
     try {
-      // Set a timeout to abort the request
-      timeoutId = setTimeout(() => {
-        controller.abort();
-        setError("Login request timed out. Please try again.");
-        setLoading(false); // Reset loading state here as well
-      }, LOGIN_TIMEOUT_MS);
-
-      const { status, response } = await UsePOST(
-        await getBackendUrl("/auth/login"),
-        {
-          username,
-          password: encryptedPassword(password),
-        },
-        {}, // Headers can be passed if needed
-        signal // Pass the signal to the usePost function
+      const auth = await api.post(
+        "/auth/login",
+        { username, password: encryptedPassword(password) },
+        { signal: controller.signal, token: "" }
       );
-
-      clearTimeout(timeoutId); // Clear the timeout if request completes before timeout
-
-      if (status === 200 && response.accessToken) {
-        localStorage.setItem("token", response.accessToken);
-        localStorage.setItem("username", response.username);
-        setIsLoggedIn(true);
-        console.log("Login successful with email:", email);
-        // Maybe a success toast here
-      } else {
-        // Handle non-200 but token exists scenario if applicable
-        setError(
-          response.error ||
-            "Login failed: Invalid credentials or server error. Please try again."
-        );
-      }
-    } catch (error) {
-      clearTimeout(timeoutId); // Clear the timeout if request completes before timeout
-
-      if (error.name === "AbortError") {
-        // This error is handled by the setTimeout callback, so we just log it
-        console.warn("Login request aborted due to timeout.");
-      } else {
-        console.error("Login API error:", error);
-        setError(
-          "An unexpected error occurred during login. Please check your network connection and try again."
-        );
-      }
+      if (!auth?.accessToken) throw new Error("No access token in response");
+      await finish(auth);
+    } catch (err) {
+      console.error("Login failed:", err);
+      setError(loginErrorMessage(err));
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
     }
   };
 
-  // New handler for Google Sign-in success
-  const handleGoogleSuccess = async (credentialResponse) => {
+  const handleGoogleSuccess = async ({ credential }) => {
     setLoading(true);
-    setError(""); // Clear any previous errors
-    console.log("Google Sign-in successful:", credentialResponse);
+    setError("");
     try {
-      // Send the Google ID token (credentialResponse.credential) to your backend
-      const { status, response } = await UsePOST(
-        await getBackendUrl("/auth/google"), // This is your backend endpoint
-        { token: credentialResponse.credential }
-      );
-
-      console.log("Google Sign-in Response:", response);
-      console.log("Google Sign-in Status:", status);
-      if (status === 201 || status === 200) {
-        // 201 for new user, 200 for existing
-
-        const headers = {
-                Authorization: `Bearer ${response.accessToken}`
-              };
-
-        const { response: genreResponse } = await UseGET(
-          await getBackendUrl("/genres"),
-          headers
-        );
-
-        console.log("Genres:", genreResponse.genre);
-
-        const { response: subgenreResponse } = await UseGET(
-          await getBackendUrl("/subgenres"),
-          headers
-        );
-        
-        console.log("Subgenres:", subgenreResponse);
-        localStorage.setItem("token", response.accessToken);
-        localStorage.setItem("username", response.username);
-        localStorage.setItem("avatar", response.picture || ""); // Handle avatar if available
-        localStorage.setItem("genres", JSON.stringify(genreResponse.genre));
-        localStorage.setItem("subgenres", JSON.stringify(subgenreResponse.subgenre));
-
-        setIsLoggedIn(true);
-        console.log("Google Sign-in successful:", response.username);
-        navigate("/dashboard");
-      } else {
-        setError(
-          response.error || "Google Sign-in failed on server. Please try again."
-        );
-      }
-    } catch (error) {
-      console.error("Google Sign-in API error:", error);
-      setError("An error occurred during Google Sign-in. Please try again.");
+      // The API reads the Google ID token from the Authorization header, as the app sends it.
+      const auth = await api.post("/auth/google", { token: credential }, { token: credential });
+      await finish(auth);
+    } catch (err) {
+      console.error("Google sign-in failed:", err);
+      setError(err.status === 403 ? "This account isn't an admin." : `Google sign-in didn't go through: ${err.message}`);
     } finally {
       setLoading(false);
     }
-  };
-
-  // Handler for Google Sign-in failure
-  const handleGoogleFailure = (errorResponse) => {
-    console.error("Google Sign-in failed:", errorResponse);
-    setError("Google Sign-in was unsuccessful. Please try again.");
-    // setLoading(false); // No need to set loading to false here, as it's not set to true for failure
   };
 
   return (
-    <div className="w-screen h-screen bg-gray-100 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        <div>
-          <h1 className="text-center text-4xl font-extrabold text-gray-900">
-            ReadPanda
-          </h1>
-          <h2 className="mt-2 text-center text-2xl font-bold text-indigo-600">
-            Admin Portal
-          </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            Sign in with your admin account
-          </p>
-        </div>
-        <form className="mt-8 space-y-6">
-          {" "}
-          {/* Use onSubmit on the form */}
-          {/* Display error message if present */}
-          {error && (
-            <div
-              className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative"
-              role="alert"
-            >
-              <strong className="font-bold">Error: </strong>
-              <span className="block sm:inline">{error}</span>
-            </div>
-          )}
-          <div className="rounded-md shadow-sm -space-y-px">
-            <div>
-              <label htmlFor="username" className="sr-only">
-                Username
-              </label>
-              <input
-                id="username"
-                name="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                type="text"
-                autoComplete="username"
-                required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-t-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                placeholder="Username"
-              />
-            </div>
-            <div>
-              <label htmlFor="password" className="sr-only">
-                Password
-              </label>
-              <input
-                id="password"
-                name="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                type="password"
-                autoComplete="current-password"
-                required
-                className="appearance-none rounded-none relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 rounded-b-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 focus:z-10 sm:text-sm"
-                placeholder="Password"
-              />
-            </div>
-          </div>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center">
-              <input
-                id="remember-me"
-                name="remember-me"
-                type="checkbox"
-                className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-              />
-              <label
-                htmlFor="remember-me"
-                className="ml-2 block text-sm text-gray-900"
-              >
-                {" "}
-                Remember me{" "}
-              </label>
-            </div>
-
-            <div className="text-sm">
-              <a
-                href="#"
-                className="font-medium text-indigo-600 hover:text-indigo-500"
-              >
-                {" "}
-                Forgot your password?{" "}
-              </a>
-            </div>
-          </div>
-          <div>
-            <button
-              type="submit"
-              disabled={loading}
-              onClick={(e) => {
-                e.preventDefault(); // Prevent default form submission
-                handleLogin(); // Call the login handler
-              }}
-              className={`group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 ${
-                loading ? "opacity-50 cursor-not-allowed" : ""
-              }`}
-            >
-              {loading ? "Signing In..." : "Sign in"}
-            </button>
-          </div>
-          <div className="mt-6">
-            <div className="relative">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300" />
-              </div>
-              <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-gray-100 text-gray-500">
-                  Or sign in with
-                </span>
-              </div>
-            </div>
-          </div>
-          <GoogleLogin
-              onSuccess={handleGoogleSuccess}
-              onError={handleGoogleFailure}
-              theme="filled_blue"
-              size="large"
-              text-align="center"
-              width="360px"
-              disabled={loading}
-            />
-
-          <p className="text-center text-sm text-gray-600">
-            Don&apos;t have an account?{" "}
-            <button
-              type="button"
-              onClick={onSwitchToSignUp}
-              className="font-medium text-indigo-600 hover:text-indigo-500"
-            >
-              Sign up
-            </button>
-          </p>
-        </form>
+    <AuthShell
+      subtitle="Sign in with your admin account"
+      error={error}
+      onSubmit={handleLogin}
+      footer={<>Don&apos;t have an account? <TextAction onClick={onSwitchToSignUp}>Sign up</TextAction></>}
+    >
+      <Field label="Username" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" autoFocus />
+      <Field label="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+      <Button type="submit" disabled={loading} className="w-full mt-1">
+        {loading ? "Signing in…" : "Sign in"}
+      </Button>
+      <div className="flex items-center gap-3 text-[11px] font-bold tracking-[1px] uppercase text-ink-holder">
+        <span className="flex-1 h-px bg-hairline" />or<span className="flex-1 h-px bg-hairline" />
       </div>
-    </div>
+      {/* Google's iframe is light; a matching color-scheme stops Chrome painting a white box behind it. */}
+      <div className="flex justify-center" style={{ colorScheme: "light" }}>
+        <GoogleLogin
+          onSuccess={handleGoogleSuccess}
+          onError={() => setError("Google sign-in didn't go through. Try again.")}
+          theme="filled_black"
+          shape="pill"
+          size="large"
+          width="352"
+        />
+      </div>
+    </AuthShell>
   );
 };
 

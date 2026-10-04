@@ -20,6 +20,8 @@ go.work
 # Environment files
 .env.local
 .env
+# Cloud Run deploy env vars (holds secrets)
+env.yaml
 
 # Compiled binary
 api-go

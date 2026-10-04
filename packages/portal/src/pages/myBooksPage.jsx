@@ -1,82 +1,74 @@
-import React, { useState, useEffect } from 'react';
-import { useGet as UseGet } from '../services/useGet'; // Import useGet
-import { getBackendUrl } from '../utils/Helper'; // Import getBackendUrl
+import { useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Banner, BookRow, Button, Chip, EmptyState, List, ListItem, Loading, PageHeader, SearchInput, Tag } from '../components/ui';
+import { bookMeta, formatCount, isPublished, useAllBooks } from '../services/queries';
+
+const FILTERS = [
+  { id: 'all', label: 'All', test: () => true },
+  { id: 'published', label: 'Published', test: isPublished },
+  { id: 'draft', label: 'Draft', test: (b) => !isPublished(b) },
+];
 
 const MyBooksPage = () => {
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const [filter, setFilter] = useState('all');
+  const query = params.get('q') ?? '';
+  const { data: books = [], isLoading, error, refetch } = useAllBooks();
 
-  const [books, setBooks] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const setQuery = (q) => setParams(q ? { q } : {}, { replace: true });
 
-  useEffect(() => {
-    const fetchBooks = async () => {
-
-      const token = localStorage.getItem("token");
-      const headers = {
-        Authorization: `Bearer ${token}`
-      };
-      try {
-        const { status, response } = await UseGet(await getBackendUrl("/books/all"), headers);
-        if (status !== 200) {
-          throw new Error(response.message);
-        }
-        setBooks(response.books);
-      } catch (error) {
-        setError(error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchBooks();
-  }, []);
-
-  if (loading) return <div className="text-3xl font-bold text-gray-800 mb-6">Loading...</div>;
-  if (error) return <div className="text-3xl font-bold text-gray-800 mb-6">Error loading books</div>;
-  if (books.length === 0) return <div className="text-3xl font-bold text-gray-800 mb-6">No books found</div>;
+  const needle = query.trim().toLowerCase();
+  const test = FILTERS.find((f) => f.id === filter).test;
+  const shown = books
+    .filter(test)
+    .filter((b) => !needle || b.title.toLowerCase().includes(needle) || (b.author_name ?? '').toLowerCase().includes(needle))
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
   return (
-    <div>
-      <h1 className="text-3xl font-bold text-gray-800 mb-6">All Books</h1>
-      <div className="bg-white rounded-lg shadow-md overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Book</th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Views</th>
-              <th scope="col" className="relative px-6 py-3"><span className="sr-only">Actions</span></th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {books.map(book => (
-              <tr key={book.book_id}>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="flex items-center">
-                    <div className="flex-shrink-0 h-20 w-14">
-                      <img className="h-20 w-14 rounded object-cover" src={book.cover_image_url} alt="" />
-                    </div>
-                    <div className="ml-4">
-                      <div className="text-sm font-medium text-gray-900">{book.title}</div>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${book.status === 1 ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                    {book.status === 1 ? 'Published' : 'Draft'}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{book.views.toLocaleString()}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                  <a href="#" className="text-indigo-600 hover:text-indigo-900 mr-4">Edit</a>
-                  <a href="#" className="text-red-600 hover:text-red-900">Delete</a>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+    <>
+      <PageHeader title="All books" subtitle={isLoading ? null : `${books.length} ${books.length === 1 ? 'book' : 'books'}`}>
+        <Button onClick={() => navigate('/upload')}>Upload book</Button>
+      </PageHeader>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <SearchInput value={query} onChange={setQuery} placeholder="Search books by title or author" className="flex-1 min-w-[220px] max-w-md" />
+        <div className="flex gap-2">
+          {FILTERS.map((f) => (
+            <Chip key={f.id} selected={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</Chip>
+          ))}
+        </div>
       </div>
-    </div>
+
+      {error ? (
+        <Banner message="Couldn't load books." onRetry={refetch} />
+      ) : isLoading ? (
+        <Loading />
+      ) : books.length === 0 ? (
+        <EmptyState title="No books yet" body="Upload a manuscript and it appears here." action={<Button onClick={() => navigate('/upload')}>Upload book</Button>} />
+      ) : shown.length === 0 ? (
+        <p className="m-0 text-[13px] text-ink-holder">Nothing matches that search.</p>
+      ) : (
+        <List>
+          {shown.map((book) => (
+            <ListItem key={book.id}>
+              <BookRow
+                cover={book.cover_image_url}
+                title={book.title}
+                meta={bookMeta(book) || book.genre}
+                tags={
+                  <>
+                    {isPublished(book) ? <Tag dot>Published</Tag> : <Tag muted>Draft</Tag>}
+                    {book.genre && <Tag>{book.genre}</Tag>}
+                  </>
+                }
+                trailing={<span className="text-xs font-semibold text-ink-holder whitespace-nowrap">{formatCount(book.views ?? 0)} views</span>}
+              />
+            </ListItem>
+          ))}
+        </List>
+      )}
+    </>
   );
 };
 

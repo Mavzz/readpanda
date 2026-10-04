@@ -1,70 +1,109 @@
 @import "tailwindcss";
 
+/* Portal design system v2 — the mobile app's 12a values, unchanged.
+   Raw tokens live on :root as --rp-*; @theme maps them to Tailwind classes
+   (bg-page, text-ink-title, rounded-card, …). */
+
+@font-face { font-family: "Manrope"; font-weight: 500; font-display: swap; src: url("/fonts/Manrope-Medium.ttf") format("truetype"); }
+@font-face { font-family: "Manrope"; font-weight: 600; font-display: swap; src: url("/fonts/Manrope-SemiBold.ttf") format("truetype"); }
+@font-face { font-family: "Manrope"; font-weight: 700; font-display: swap; src: url("/fonts/Manrope-Bold.ttf") format("truetype"); }
+@font-face { font-family: "Manrope"; font-weight: 800; font-display: swap; src: url("/fonts/Manrope-ExtraBold.ttf") format("truetype"); }
+
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+  /* Surfaces — depth by step, not border */
+  --rp-well: #060d20;
+  --rp-page: #0b1326;
+  --rp-surface-1: #131b2e;
+  --rp-surface-2: #171f33;
+  --rp-surface-3: #222a3e;
+  --rp-hairline: #1b2338;
+  --rp-dashed: #2a3450;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  /* Ink */
+  --rp-ink-title: #dae2fd;
+  --rp-ink-body: #c6cde8;
+  --rp-ink-meta: #d6c3b2;
+  --rp-ink-holder: #8b93ad;
+  --rp-ink-disabled: #5d6580;
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
+  /* Accent */
+  --rp-link: #ffddb8;
+  --rp-gold: #ffb95f;
+  --rp-on-gold: #472a00;
+  --rp-gradient: linear-gradient(135deg, #ffddb8, #ffb95f);
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
-
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+  /* Shape */
+  --rp-r-cover-s: 8px;
+  --rp-r-cover: 12px;
+  --rp-r-field: 14px;
+  --rp-r-card: 20px;
+  --rp-r-panel: 28px;
 }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+@theme inline {
+  --font-sans: "Manrope", system-ui, sans-serif;
+
+  --color-well: var(--rp-well);
+  --color-page: var(--rp-page);
+  --color-surface-1: var(--rp-surface-1);
+  --color-surface-2: var(--rp-surface-2);
+  --color-surface-3: var(--rp-surface-3);
+  --color-hairline: var(--rp-hairline);
+  --color-dashed: var(--rp-dashed);
+  --color-ink-title: var(--rp-ink-title);
+  --color-ink-body: var(--rp-ink-body);
+  --color-ink-meta: var(--rp-ink-meta);
+  --color-ink-holder: var(--rp-ink-holder);
+  --color-ink-disabled: var(--rp-ink-disabled);
+  --color-link: var(--rp-link);
+  --color-gold: var(--rp-gold);
+  --color-on-gold: var(--rp-on-gold);
+
+  --radius-cover-s: var(--rp-r-cover-s);
+  --radius-cover: var(--rp-r-cover);
+  --radius-field: var(--rp-r-field);
+  --radius-card: var(--rp-r-card);
+  --radius-panel: var(--rp-r-panel);
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
+@utility bg-primary-gradient {
+  background: var(--rp-gradient);
+}
+
+/* Primary-button glow: one of only two shadows the system allows. */
+@utility shadow-glow {
+  box-shadow: 0 6px 20px rgba(255, 185, 95, 0.28);
+}
+
+/* Hairline inside lists, inset to the text. */
+@utility hairline-b {
+  box-shadow: inset 0 -1px 0 var(--rp-hairline);
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
   }
-  a:hover {
-    color: #747bff;
+  body {
+    margin: 0;
+    min-width: 320px;
+    background: var(--rp-page);
+    color: var(--rp-ink-body);
+    font-family: var(--font-sans);
+    font-weight: 500;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
-  button {
-    background-color: #f9f9f9;
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--rp-ink-holder);
+  }
+  :focus-visible {
+    outline: 2px solid var(--rp-gold);
+    outline-offset: 2px;
   }
 }

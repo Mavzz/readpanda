@@ -76,41 +76,27 @@ Both backend implementations share the same PostgreSQL database and Firebase Sto
 
 ## Getting Started
 
-See [TECHNICAL_DOCUMENTATION.md](TECHNICAL_DOCUMENTATION.md) for detailed setup instructions.
+**The Go API (`packages/api-go`) is the backend in use.** It serves the mobile
+app ([readpanda-mobile](https://github.com/Mavzz/readpanda-mobile)) and the
+portal, and it's what runs in production. `packages/api` (Node.js) is the
+original implementation; its `docker-compose.yml` is still the easiest way to
+run Postgres and MinIO locally.
 
-### Quick Start
-
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd readpanda
-```
-
-2. Choose your backend:
-
-**Option A: Node.js Backend**
-```bash
-cd packages/api
-npm install
-npm start
-```
-
-**Option B: Go Backend**
-```bash
-cd packages/api-go
-go mod download
-go run cmd/server/main.go
-```
-
-3. Start the frontend:
-```bash
-cd packages/portal
-npm install
-npm run dev
-```
+- **Run the backend locally:** [packages/api-go/README.md](packages/api-go/README.md)
+- **Deploy and operate production** (Cloud Run, Supabase, R2): [packages/api-go/DEPLOYMENT.md](packages/api-go/DEPLOYMENT.md)
+- **Run the mobile app:** `docs/RUN.md` in [readpanda-mobile](https://github.com/Mavzz/readpanda-mobile)
+- **Run the portal:**
+  ```bash
+  cd packages/portal
+  npm install
+  npm run dev
+  ```
 
 ## Documentation
 
+- [Go API README](packages/api-go/README.md) - Local setup, schema, working on the backend
+- [Deployment guide](packages/api-go/DEPLOYMENT.md) - Production on Cloud Run, Supabase and R2
+- [API routes](packages/api-go/ROUTES.md) - Every endpoint
 - **[Performance Benefits Guide](PERFORMANCE_BENEFITS.md)** - 🚀 How Go improves your app performance
 - [Technical Documentation](TECHNICAL_DOCUMENTATION.md) - Complete architecture and setup guide
 - [Node.js vs Go Comparison](NODEJS_VS_GO_COMPARISON.md) - Detailed comparison of both backend implementations
