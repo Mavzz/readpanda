@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import AuthShell from "../components/AuthShell";
 import { Button, Field, TextAction } from "../components/ui";
 import { api } from "../services/api";
-import { encryptedPassword } from "../utils/Helper";
 import { startSession } from "../utils/session";
 
 const SignUpPage = ({ setIsLoggedIn, onSwitchToLogin }) => {
@@ -30,7 +29,7 @@ const SignUpPage = ({ setIsLoggedIn, onSwitchToLogin }) => {
     try {
       const auth = await api.post(
         "/signup",
-        { username, email, password: encryptedPassword(password) },
+        { username, email, password },
         { token: "" }
       );
       if (!auth?.accessToken) throw new Error("No access token in response");

@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 import AuthShell from "../components/AuthShell";
 import { Button, Field, TextAction } from "../components/ui";
 import { api } from "../services/api";
-import { encryptedPassword } from "../utils/Helper";
 import { startSession } from "../utils/session";
 
 const LOGIN_TIMEOUT_MS = 10000;
@@ -42,7 +41,7 @@ const LoginPage = ({ setIsLoggedIn, onSwitchToSignUp }) => {
     try {
       const auth = await api.post(
         "/auth/login",
-        { username, password: encryptedPassword(password) },
+        { username, password },
         { signal: controller.signal, token: "" }
       );
       if (!auth?.accessToken) throw new Error("No access token in response");
