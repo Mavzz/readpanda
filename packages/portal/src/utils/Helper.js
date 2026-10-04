@@ -1,10 +1,3 @@
-import CryptoJS  from "crypto-js";
-
-// Encrypt the password
-const encryptedPassword = (password) => {
-  return CryptoJS.AES.encrypt(password, import.meta.env.VITE_CRYPTO_SECRET).toString();
-};
-
 // VITE_BACKEND_URL is the API's full origin, e.g.
 // https://readpanda-backend-….run.app (production: https, no port). Without
 // it, local dev builds http://<VITE_BACKEND_BASE_URL>:<VITE_BACKEND_PORT>.
@@ -43,4 +36,4 @@ const SignUpType = {
   return { status, response };
 };*/
 
-export { encryptedPassword, getBackendUrl, SignUpType };
+export { getBackendUrl, SignUpType };
