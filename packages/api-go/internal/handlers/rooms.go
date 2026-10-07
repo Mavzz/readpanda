@@ -3,6 +3,8 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"strings"
@@ -299,16 +301,10 @@ func loadRoomMembers(roomID string, currentBookID sql.NullString) ([]models.Room
 	return members, groupPct, nil
 }
 
-// GetRoomDetail — GET /room/{id}
-// The whole Room Detail screen in one call: the room, what it's reading
-// (standalone book, or a current book from a bucket), and its members.
-func (h *RoomHandler) GetRoomDetail(w http.ResponseWriter, r *http.Request) {
-	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
-	if !ok {
-		return
-	}
-	roomID := mux.Vars(r)["id"]
-
+// loadRoomDetail reads everything Room Detail shows: the room, what it's
+// reading (standalone book, or a current book from a bucket), and its members.
+// sql.ErrNoRows means there is no such room. Membership is the caller's check.
+func loadRoomDetail(roomID string) (*models.RoomDetail, error) {
 	var detail models.RoomDetail
 	var currentBookID, currentBucketID, currentBucketType sql.NullString
 	err := database.DB.QueryRow(
@@ -321,6 +317,51 @@ func (h *RoomHandler) GetRoomDetail(w http.ResponseWriter, r *http.Request) {
 		&detail.AdminID, &detail.CreatedAt, &detail.UpdatedAt,
 		&currentBookID, &currentBucketID, &currentBucketType,
 	)
+	if err != nil {
+		return nil, err
+	}
+
+	if currentBookID.Valid {
+		var book models.BookPreview
+		err := database.DB.QueryRow(
+			`SELECT book_id, title, cover_image_url, manuscript_url FROM books WHERE book_id = $1`,
+			currentBookID.String,
+		).Scan(&book.BookID, &book.Title, &book.CoverImageURL, &book.ManuscriptURL)
+		if err == nil {
+			detail.CurrentBook = &book
+		} else if err != sql.ErrNoRows {
+			return nil, fmt.Errorf("current book: %w", err)
+		}
+	}
+
+	if currentBucketID.Valid && currentBucketType.Valid {
+		bucket, err := loadRoomBucket(currentBucketID.String, currentBucketType.String)
+		if err != nil {
+			return nil, fmt.Errorf("room bucket: %w", err)
+		}
+		detail.Bucket = bucket
+	}
+
+	members, groupPct, err := loadRoomMembers(roomID, currentBookID)
+	if err != nil {
+		return nil, fmt.Errorf("room members: %w", err)
+	}
+	detail.Members = members
+	detail.GroupProgressPct = groupPct
+	return &detail, nil
+}
+
+// GetRoomDetail — GET /room/{id}
+// The whole Room Detail screen in one call: the room, what it's reading
+// (standalone book, or a current book from a bucket), and its members.
+func (h *RoomHandler) GetRoomDetail(w http.ResponseWriter, r *http.Request) {
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	if !ok {
+		return
+	}
+	roomID := mux.Vars(r)["id"]
+
+	detail, err := loadRoomDetail(roomID)
 	if err == sql.ErrNoRows {
 		http.Error(w, `{"error": "Room not found"}`, http.StatusNotFound)
 		return
@@ -339,37 +380,6 @@ func (h *RoomHandler) GetRoomDetail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error": "Not a member of this room"}`, http.StatusForbidden)
 		return
 	}
-
-	if currentBookID.Valid {
-		var book models.BookPreview
-		err := database.DB.QueryRow(
-			`SELECT book_id, title, cover_image_url, manuscript_url FROM books WHERE book_id = $1`,
-			currentBookID.String,
-		).Scan(&book.BookID, &book.Title, &book.CoverImageURL, &book.ManuscriptURL)
-		if err == nil {
-			detail.CurrentBook = &book
-		} else if err != sql.ErrNoRows {
-			http.Error(w, `{"error": "Failed to get current book"}`, http.StatusInternalServerError)
-			return
-		}
-	}
-
-	if currentBucketID.Valid && currentBucketType.Valid {
-		bucket, err := loadRoomBucket(currentBucketID.String, currentBucketType.String)
-		if err != nil {
-			http.Error(w, `{"error": "Failed to get room bucket"}`, http.StatusInternalServerError)
-			return
-		}
-		detail.Bucket = bucket
-	}
-
-	members, groupPct, err := loadRoomMembers(roomID, currentBookID)
-	if err != nil {
-		http.Error(w, `{"error": "Failed to get room members"}`, http.StatusInternalServerError)
-		return
-	}
-	detail.Members = members
-	detail.GroupProgressPct = groupPct
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -432,9 +442,22 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The whole Room Detail, not just the room row: a reader joining a room
+	// that is already reading something takes up its book straight away, and
+	// the client can only do that if it's told what the book is.
+	// The join itself has already happened, so a failure here mustn't turn
+	// into an error: a retry would only be told "already in this room". Fall
+	// back to the bare room, which is what this endpoint used to return.
+	var payload interface{} = room
+	if detail, err := loadRoomDetail(room.ID); err == nil {
+		payload = detail
+	} else {
+		log.Printf("JoinRoom: joined %s but failed to load its detail: %v", room.ID, err)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(room)
+	json.NewEncoder(w).Encode(payload)
 }
 
 // SetRoomReading — PATCH /room/{id}/reading

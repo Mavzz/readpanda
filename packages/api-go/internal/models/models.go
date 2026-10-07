@@ -274,6 +274,10 @@ type ReadingProgress struct {
 	FurthestPage int       `json:"furthest_page"`
 	ProgressPct  int       `json:"progress_pct"`
 	LastReadAt   time.Time `json:"last_read_at"`
+	// Only on PUT /progress: how many comments, across every room the reader
+	// is in, this save moved behind the spoiler line. The reader re-fetches
+	// comments when it's above zero rather than after every page.
+	NewlyUnlocked int `json:"newly_unlocked"`
 }
 
 // MyBookProgress is one of my own positions with enough of the book to put it
