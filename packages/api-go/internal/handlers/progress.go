@@ -77,6 +77,14 @@ func (h *ProgressHandler) PutMyProgress(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Where the spoiler line was before this save, so the response can say
+	// whether moving it unlocked anything.
+	previousFurthest, err := furthestPageFor(userID, bookID)
+	if err != nil {
+		http.Error(w, `{"error": "Failed to save reading progress"}`, http.StatusInternalServerError)
+		return
+	}
+
 	now := time.Now().UTC()
 	var stored models.ReadingProgress
 	// Backing out of the reader before the PDF reports its length sends a
@@ -87,7 +95,7 @@ func (h *ProgressHandler) PutMyProgress(w http.ResponseWriter, r *http.Request) 
 	// furthest_page only ever climbs. It is the line the comment spoiler rule
 	// is drawn at, so flipping back to re-read an earlier chapter must not
 	// re-lock comments the reader has already been shown.
-	err := database.DB.QueryRow(
+	err = database.DB.QueryRow(
 		`INSERT INTO reading_progress (user_id, book_id, current_page, total_pages, furthest_page, last_read_at, updated_at)
 		 VALUES ($1, $2, $3, $4, $3, $5, $5)
 		 ON CONFLICT (user_id, book_id) DO UPDATE
@@ -110,6 +118,30 @@ func (h *ProgressHandler) PutMyProgress(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	stored.ProgressPct = progressPct(stored.CurrentPage, stored.TotalPages)
+
+	// Comments on the pages this save just carried the reader past: other
+	// people's, in rooms the reader belongs to, counted by thread the way
+	// GetBookComments locks them. Nothing here says which page — the reader
+	// has reached all of them, so the next fetch returns them anyway. Best
+	// effort: a failed count means the client skips one re-fetch, not that
+	// the save failed.
+	if stored.FurthestPage > previousFurthest {
+		if err := database.DB.QueryRow(
+			`SELECT COUNT(*) FROM book_comments c
+			   JOIN book_comments root ON root.id = COALESCE(c.parent_id, c.id)
+			  WHERE c.book_id = $2 AND c.user_id <> $1
+			    AND root.page > $3 AND root.page <= $4
+			    AND root.user_id <> $1
+			    AND c.room_id IN (
+			        SELECT id FROM rooms WHERE admin_id = $1
+			        UNION
+			        SELECT room_id FROM room_members WHERE user_id = $1
+			    )`,
+			userID, bookID, previousFurthest, stored.FurthestPage,
+		).Scan(&stored.NewlyUnlocked); err != nil {
+			log.Printf("Failed to count comments unlocked for %s in %s: %v", userID, bookID, err)
+		}
+	}
 
 	// The first reader to open a book is how the catalogue learns its length
 	// (Book detail's "{pages} pages"). Best effort: a failure here leaves the
