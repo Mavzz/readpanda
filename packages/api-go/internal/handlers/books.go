@@ -6,8 +6,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/Mavzz/readpanda/api-go/internal/config"
 	"github.com/Mavzz/readpanda/api-go/internal/database"
@@ -28,52 +31,146 @@ func NewBookHandler(cfg *config.Config) *BookHandler {
 	return &BookHandler{Config: cfg}
 }
 
-// PublishBook handles book publishing with cover and manuscript upload
+// Upload limits. The portal sends files straight to storage through presigned
+// URLs (see CreateUploadURLs), so these are ours, not Cloud Run's 32 MiB cap.
+const (
+	maxManuscriptBytes = 500 << 20
+	maxCoverBytes      = 20 << 20
+	uploadURLTTL       = time.Hour
+)
+
+var (
+	manuscriptTypes = map[string]string{".pdf": "application/pdf", ".epub": "application/epub+zip"}
+	coverTypes      = map[string]string{".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"}
+	bookIDPattern   = regexp.MustCompile(`^bk_[0-9a-f]{8}$`)
+)
+
+// bookFields are the publish form's text fields.
+type bookFields struct {
+	Title         string
+	Description   string
+	Genre         string
+	Subgenre      string
+	AuthorName    string
+	NotifyReaders bool
+}
+
+func newBookID() string {
+	return "bk_" + uuid.New().String()[:8]
+}
+
+// storageKey places a book's file in storage. Keys carry the book id: uploads
+// routinely share file names ("cover.jpeg" from an EPUB), and a shared key
+// would overwrite the other book's file.
+func storageKey(folder, bookID, filename string) string {
+	name := path.Base(strings.ReplaceAll(filename, `\`, "/"))
+	return fmt.Sprintf("books/%s/%s-%s", folder, bookID, name)
+}
+
+type uploadFile struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
+type uploadTarget struct {
+	Key         string `json:"key"`
+	URL         string `json:"url"`
+	ContentType string `json:"content_type"`
+}
+
+// CreateUploadURLs starts a publish: it picks the book id and returns one
+// presigned PUT URL per file. The client uploads to those URLs, then calls
+// PublishBook with the book id and keys.
+func (h *BookHandler) CreateUploadURLs(w http.ResponseWriter, r *http.Request) {
+	if _, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret); !ok {
+		return
+	}
+
+	var req struct {
+		Manuscript *uploadFile `json:"manuscript"`
+		Cover      *uploadFile `json:"cover"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		adminError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if req.Manuscript == nil {
+		adminError(w, http.StatusBadRequest, "A manuscript is required")
+		return
+	}
+
+	bookID := newBookID()
+	resp := map[string]interface{}{"book_id": bookID}
+
+	files := []struct {
+		field  string
+		folder string
+		file   *uploadFile
+		types  map[string]string
+		max    int64
+		label  string
+	}{
+		{"manuscript", "manuscripts", req.Manuscript, manuscriptTypes, maxManuscriptBytes, "The manuscript has to be a PDF or EPUB"},
+		{"cover", "covers", req.Cover, coverTypes, maxCoverBytes, "The cover has to be a JPEG, PNG, WebP or GIF image"},
+	}
+	for _, f := range files {
+		if f.file == nil {
+			continue
+		}
+		contentType, ok := f.types[strings.ToLower(path.Ext(f.file.Name))]
+		if !ok {
+			adminError(w, http.StatusBadRequest, f.label)
+			return
+		}
+		if f.file.Size > f.max {
+			adminError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("The %s is over the %d MB limit", f.field, f.max>>20))
+			return
+		}
+		key := storageKey(f.folder, bookID, f.file.Name)
+		url, err := utils.PresignUpload(key, contentType, uploadURLTTL)
+		if err != nil {
+			adminError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		resp[f.field] = uploadTarget{Key: key, URL: url, ContentType: contentType}
+	}
+
+	adminJSON(w, http.StatusOK, resp)
+}
+
+// PublishBook adds a book. The portal sends JSON naming files it already put
+// in storage through CreateUploadURLs; a multipart form with the files
+// themselves still works for small files (Cloud Run rejects bodies over 32 MiB).
 func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		http.Error(w, `{"error": "Authorization header required"}`, http.StatusUnauthorized)
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	if !ok {
 		return
 	}
 
-	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 {
-		http.Error(w, `{"error": "Invalid authorization header"}`, http.StatusUnauthorized)
-		return
-	}
-
-	token := parts[1]
-	if !utils.CheckToken(token, h.Config.JWTSecret) {
-		http.Error(w, `{"error": "Unauthorized"}`, http.StatusUnauthorized)
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		h.publishUploadedBook(w, r, userID)
 		return
 	}
 
 	// Parse multipart form
-	err := r.ParseMultipartForm(32 << 20) // 32 MB max
+	err := r.ParseMultipartForm(32 << 20) // in memory up to 32 MB, the rest on disk
 	if err != nil {
 		http.Error(w, `{"error": "Failed to parse form"}`, http.StatusBadRequest)
 		return
 	}
 
-	title := r.FormValue("title")
-	description := r.FormValue("description")
-	genre := r.FormValue("genre")
-	subgenre := r.FormValue("subgenre")
-	authorName := strings.TrimSpace(r.FormValue("author_name"))
-	// The portal's bulk upload sends notify=false so a batch of test books
-	// doesn't send every reader one notification per book.
-	notifyReaders := r.FormValue("notify") != "false"
-
-	claims, err := utils.DecodeToken(token, h.Config.JWTSecret)
-	if err != nil {
-		http.Error(w, `{"error": "Invalid token"}`, http.StatusUnauthorized)
-		return
+	fields := bookFields{
+		Title:       r.FormValue("title"),
+		Description: r.FormValue("description"),
+		Genre:       r.FormValue("genre"),
+		Subgenre:    r.FormValue("subgenre"),
+		AuthorName:  strings.TrimSpace(r.FormValue("author_name")),
+		// The portal's bulk upload sends notify=false so a batch of test books
+		// doesn't send every reader one notification per book.
+		NotifyReaders: r.FormValue("notify") != "false",
 	}
 
-	// Storage keys carry the book id: uploads routinely share file names
-	// ("cover.jpeg" from an EPUB), and a shared key would overwrite the
-	// other book's file.
-	bookID := "bk_" + uuid.New().String()[:8]
+	bookID := newBookID()
 
 	var coverLink, manuscriptLink *string
 
@@ -87,7 +184,7 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		coverPath := fmt.Sprintf("books/covers/%s-%s", bookID, coverHeader.Filename)
+		coverPath := storageKey("covers", bookID, coverHeader.Filename)
 		url, err := utils.UploadFileToStorage(coverData, coverHeader.Header.Get("Content-Type"), coverPath)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to upload cover: `+err.Error()+`"}`, http.StatusInternalServerError)
@@ -106,7 +203,7 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		manuscriptPath := fmt.Sprintf("books/manuscripts/%s-%s", bookID, manuscriptHeader.Filename)
+		manuscriptPath := storageKey("manuscripts", bookID, manuscriptHeader.Filename)
 		url, err := utils.UploadFileToStorage(manuscriptData, manuscriptHeader.Header.Get("Content-Type"), manuscriptPath)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to upload manuscript: `+err.Error()+`"}`, http.StatusInternalServerError)
@@ -120,10 +217,88 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.saveBook(w, userID, bookID, fields, coverLink, manuscriptLink)
+}
+
+// publishUploadedBook is PublishBook for files already in storage. It checks
+// each key belongs to the book id CreateUploadURLs issued and that the
+// upload landed within the size limit.
+func (h *BookHandler) publishUploadedBook(w http.ResponseWriter, r *http.Request, userID string) {
+	var req struct {
+		BookID        string `json:"book_id"`
+		Title         string `json:"title"`
+		Description   string `json:"description"`
+		Genre         string `json:"genre"`
+		Subgenre      string `json:"subgenre"`
+		AuthorName    string `json:"author_name"`
+		Notify        *bool  `json:"notify"`
+		ManuscriptKey string `json:"manuscript_key"`
+		CoverKey      string `json:"cover_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		adminError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	if !bookIDPattern.MatchString(req.BookID) {
+		adminError(w, http.StatusBadRequest, "Invalid book_id")
+		return
+	}
+	if req.ManuscriptKey == "" {
+		adminError(w, http.StatusBadRequest, "manuscript_key is required")
+		return
+	}
+
+	// Returns the file's public URL, or "" after writing the error.
+	checkUpload := func(key, folder string, max int64, field string) string {
+		if !strings.HasPrefix(key, "books/"+folder+"/"+req.BookID+"-") {
+			adminError(w, http.StatusBadRequest, "Invalid "+field+"_key")
+			return ""
+		}
+		size, err := utils.StatObject(key)
+		if err != nil {
+			adminError(w, http.StatusBadRequest, "The "+field+" upload didn't finish. Try again.")
+			return ""
+		}
+		if size > max {
+			if err := utils.DeleteObject(key); err != nil {
+				log.Printf("books: failed to delete oversized %s: %v", key, err)
+			}
+			adminError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("The %s is over the %d MB limit", field, max>>20))
+			return ""
+		}
+		return utils.PublicURL(key)
+	}
+
+	manuscriptURL := checkUpload(req.ManuscriptKey, "manuscripts", maxManuscriptBytes, "manuscript")
+	if manuscriptURL == "" {
+		return
+	}
+	var coverLink *string
+	if req.CoverKey != "" {
+		coverURL := checkUpload(req.CoverKey, "covers", maxCoverBytes, "cover")
+		if coverURL == "" {
+			return
+		}
+		coverLink = &coverURL
+	}
+
+	fields := bookFields{
+		Title:         req.Title,
+		Description:   req.Description,
+		Genre:         req.Genre,
+		Subgenre:      req.Subgenre,
+		AuthorName:    strings.TrimSpace(req.AuthorName),
+		NotifyReaders: req.Notify == nil || *req.Notify,
+	}
+	h.saveBook(w, userID, req.BookID, fields, coverLink, &manuscriptURL)
+}
+
+// saveBook inserts the book row, tells readers and answers the publish request.
+func (h *BookHandler) saveBook(w http.ResponseWriter, userID, bookID string, fields bookFields, coverLink, manuscriptLink *string) {
 	// Insert book into database
-	_, err = database.DB.Exec(
+	_, err := database.DB.Exec(
 		"INSERT INTO books (book_id, title, description, subgenre, genre, author_name, cover_image_url, manuscript_url, status, views, user_id) VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8, $9, $10, $11)",
-		bookID, title, description, subgenre, genre, authorName, coverLink, manuscriptLink, 1, 0, claims.UserID,
+		bookID, fields.Title, fields.Description, fields.Subgenre, fields.Genre, fields.AuthorName, coverLink, manuscriptLink, 1, 0, userID,
 	)
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
@@ -133,12 +308,12 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 	// Tell every other reader. Only once there is a manuscript: a NEW_BOOK
 	// notification opens the reader, and a cover alone has nothing to open.
 	// A failure here costs the announcement, not the upload.
-	if manuscriptLink != nil && notifyReaders {
-		displayTitle := strings.TrimSpace(title)
+	if manuscriptLink != nil && fields.NotifyReaders {
+		displayTitle := strings.TrimSpace(fields.Title)
 		if displayTitle == "" {
 			displayTitle = "A new book"
 		}
-		if err := notify.ToAllUsersExcept(claims.UserID, notify.Notification{
+		if err := notify.ToAllUsersExcept(userID, notify.Notification{
 			Type:    models.NotificationTypeNewBook,
 			Title:   "New book added",
 			Message: displayTitle + " is ready to read.",
@@ -152,6 +327,7 @@ func (h *BookHandler) PublishBook(w http.ResponseWriter, r *http.Request) {
 
 	response := map[string]string{
 		"message": "Book uploaded successfully",
+		"book_id": bookID,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

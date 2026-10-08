@@ -83,6 +83,7 @@ func main() {
 	router.HandleFunc(apiPrefix+"/user/preferences", preferencesHandler.UpdateUserPreferences).Methods("POST", "OPTIONS")
 
 	// Books routes
+	router.HandleFunc(apiPrefix+"/books/upload-urls", bookHandler.CreateUploadURLs).Methods("POST", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/books/upload", bookHandler.PublishBook).Methods("POST", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/books", bookHandler.GetBooksForUser).Methods("GET")
 	router.HandleFunc(apiPrefix+"/books/all", bookHandler.GetAllBooks).Methods("GET")

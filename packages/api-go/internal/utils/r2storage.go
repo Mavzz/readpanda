@@ -127,6 +127,65 @@ func UploadFileToStorage(fileData []byte, contentType, destinationPath string) (
 	return objectStorage.buildPublicURL(destinationPath), nil
 }
 
+// PresignUpload returns a URL a client can PUT one object to directly, so
+// large files skip the API (Cloud Run caps request bodies at 32 MiB). The
+// object is stored with whatever Content-Type the PUT sends; only the host is
+// signed, so callers should send contentType.
+func PresignUpload(key, contentType string, expiresIn time.Duration) (string, error) {
+	if objectStorage == nil {
+		return "", fmt.Errorf("object storage not initialized")
+	}
+
+	presignClient := s3.NewPresignClient(objectStorage.client)
+	req, err := presignClient.PresignPutObject(context.Background(), &s3.PutObjectInput{
+		Bucket:      aws.String(objectStorage.bucketName),
+		Key:         aws.String(key),
+		ContentType: aws.String(contentType),
+	}, s3.WithPresignExpires(expiresIn))
+	if err != nil {
+		return "", fmt.Errorf("failed to presign upload: %w", err)
+	}
+
+	return req.URL, nil
+}
+
+// StatObject returns the size of a stored object, or an error if it is missing.
+func StatObject(key string) (int64, error) {
+	if objectStorage == nil {
+		return 0, fmt.Errorf("object storage not initialized")
+	}
+
+	head, err := objectStorage.client.HeadObject(context.Background(), &s3.HeadObjectInput{
+		Bucket: aws.String(objectStorage.bucketName),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to stat object: %w", err)
+	}
+	return aws.ToInt64(head.ContentLength), nil
+}
+
+// DeleteObject removes one stored object.
+func DeleteObject(key string) error {
+	if objectStorage == nil {
+		return fmt.Errorf("object storage not initialized")
+	}
+
+	_, err := objectStorage.client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+		Bucket: aws.String(objectStorage.bucketName),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete object: %w", err)
+	}
+	return nil
+}
+
+// PublicURL is the public URL of a stored object.
+func PublicURL(key string) string {
+	return objectStorage.buildPublicURL(key)
+}
+
 // GetFileDownloadURL generates a presigned URL for a private object.
 func GetFileDownloadURL(key string, expiresIn time.Duration) (string, error) {
 	if objectStorage == nil {
