@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Banner, Button, Card, Cover, Eyebrow, Field, PageHeader } from "../components/ui";
 import { UploadIcon } from "../components/icons";
-import { api } from "../services/api";
+import { COVER_LIMIT, COVER_TYPES, MANUSCRIPT_LIMIT, publishBook } from "../services/publishBook";
 import { BOOKS_KEY } from "../services/queries";
 import { readJSON } from "../utils/session";
 
 const MANUSCRIPT_TYPES = [".pdf", ".epub"];
-const isManuscript = (file) => MANUSCRIPT_TYPES.some((ext) => file.name.toLowerCase().endsWith(ext));
+const hasExt = (file, exts) => exts.some((ext) => file.name.toLowerCase().endsWith(ext));
 
 const EMPTY = { title: "", author: "", description: "", genre: "", subgenre: "" };
 
@@ -19,6 +19,7 @@ const UploadBookPage = () => {
   const [manuscript, setManuscript] = useState(null);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [notice, setNotice] = useState("");
   const coverInput = useRef(null);
   const manuscriptInput = useRef(null);
@@ -34,13 +35,25 @@ const UploadBookPage = () => {
   const setGenre = (e) => setForm((f) => ({ ...f, genre: e.target.value, subgenre: "" }));
 
   const pickCover = (file) => {
+    if (file && !hasExt(file, COVER_TYPES)) {
+      setNotice("The cover has to be a JPEG, PNG, WebP or GIF image.");
+      return;
+    }
+    if (file && file.size > COVER_LIMIT) {
+      setNotice(`The cover is over the ${COVER_LIMIT >> 20} MB limit.`);
+      return;
+    }
     setCoverFile(file ?? null);
     setCoverPreview(file ? URL.createObjectURL(file) : null);
   };
 
   const pickManuscript = (file) => {
-    if (file && !isManuscript(file)) {
+    if (file && !hasExt(file, MANUSCRIPT_TYPES)) {
       setNotice("The manuscript has to be a PDF or EPUB.");
+      return;
+    }
+    if (file && file.size > MANUSCRIPT_LIMIT) {
+      setNotice(`The manuscript is over the ${MANUSCRIPT_LIMIT >> 20} MB limit.`);
       return;
     }
     setManuscript(file ?? null);
@@ -65,17 +78,16 @@ const UploadBookPage = () => {
     if (!ready) return;
     setNotice("");
     setUploading(true);
+    setProgress(0);
     try {
-      const data = new FormData();
-      data.append("title", form.title.trim());
-      data.append("author_name", form.author.trim());
-      data.append("description", form.description.trim());
-      data.append("genre", form.genre);
-      data.append("subgenre", form.subgenre);
-      data.append("manuscript", manuscript);
-      if (coverFile) data.append("cover", coverFile);
-
-      await api.upload("/books/upload", data);
+      const details = {
+        title: form.title.trim(),
+        author_name: form.author.trim(),
+        description: form.description.trim(),
+        genre: form.genre,
+        subgenre: form.subgenre,
+      };
+      await publishBook(details, manuscript, coverFile, setProgress);
       queryClient.invalidateQueries({ queryKey: BOOKS_KEY });
       setNotice(`"${form.title.trim()}" is published. Readers get a notification.`);
       setForm(EMPTY);
@@ -125,7 +137,7 @@ const UploadBookPage = () => {
                 <span className="text-[11px] font-semibold text-ink-holder">Optional · 2:3 looks best</span>
               </div>
             </div>
-            <input ref={coverInput} type="file" accept="image/*" hidden onChange={(e) => pickCover(e.target.files?.[0])} />
+            <input ref={coverInput} type="file" accept={COVER_TYPES.join(",")} hidden onChange={(e) => pickCover(e.target.files?.[0])} />
           </Card>
 
           <Card className="p-6 flex flex-col gap-3">
@@ -142,13 +154,13 @@ const UploadBookPage = () => {
                 <UploadIcon width={18} height={18} />
               </span>
               <span className="text-sm font-extrabold text-ink-title break-all">{manuscript ? manuscript.name : "Drop a PDF or EPUB"}</span>
-              <span className="text-xs font-semibold text-ink-holder">{manuscript ? "Click to replace" : "or click to choose · up to 50 MB"}</span>
+              <span className="text-xs font-semibold text-ink-holder">{manuscript ? "Click to replace" : `or click to choose · up to ${MANUSCRIPT_LIMIT >> 20} MB`}</span>
             </button>
             <input ref={manuscriptInput} type="file" accept={MANUSCRIPT_TYPES.join(",")} hidden onChange={(e) => pickManuscript(e.target.files?.[0])} />
           </Card>
 
           <Button type="submit" disabled={!ready} className="w-full">
-            {uploading ? "Publishing…" : "Publish book"}
+            {uploading ? `Uploading ${Math.round(progress * 100)}%…` : "Publish book"}
           </Button>
           {!uploading && missing.length > 0 && (
             <span className="text-xs font-semibold text-ink-holder text-center">Still needs {missing.length > 1 ? `${missing.slice(0, -1).join(", ")} and ${missing.at(-1)}` : missing[0]}.</span>

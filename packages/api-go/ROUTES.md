@@ -34,7 +34,8 @@ Authorization: Bearer <access_token>
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| POST | `/books/upload` | Yes | Publish a new book. **Multipart form** with fields: `title`, `description`, `genre`, `subgenre`, and files: `cover` (image), `manuscript`. Max 32 MB. |
+| POST | `/books/upload-urls` | Yes | Start a publish. Body `{ manuscript: { name, size }, cover?: { name, size } }`. Returns `{ book_id, manuscript: { key, url, content_type }, cover? }`: PUT each file to its `url` with that `Content-Type` header (URLs last 1 hour). Manuscript: PDF or EPUB, up to 500 MB. Cover: JPEG, PNG, WebP or GIF, up to 20 MB. |
+| POST | `/books/upload` | Yes | Publish a new book. **JSON** (after `/books/upload-urls`): `book_id`, `title`, `description`, `genre`, `subgenre`, `author_name`, `notify` (default true), `manuscript_key`, `cover_key?`. Checks the files are in storage within the limits. Still accepts the old **multipart form** with `cover` and `manuscript` files, but Cloud Run rejects those bodies over 32 MB. |
 | GET | `/books` | Yes | Get all books for the authenticated user. Returns `{ books: [...] }`. |
 | GET | `/books/all` | Yes | Get all books in the system. Returns `{ books: [...] }`. |
 | POST | `/books/seed` | Yes | Seed books from object storage (R2/MinIO). Scans the storage bucket and inserts missing books into the database. |

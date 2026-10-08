@@ -1,23 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Banner, BookRow, Button, Card, Eyebrow, List, ListItem, PageHeader, Tag, TextAction, Toggle } from "../components/ui";
-import { api } from "../services/api";
+import { COVER_LIMIT, COVER_TYPES, MANUSCRIPT_LIMIT, publishBook } from "../services/publishBook";
 import { BOOKS_KEY } from "../services/queries";
 import { readJSON } from "../utils/session";
 import { parseCSVObjects, toCSV } from "../utils/csv";
 
 // Bulk upload: pick one folder holding a books.csv manifest and the files it
-// names. Each manifest row becomes one POST /books/upload, sent one at a time
-// so a large batch doesn't hold every file in flight at once.
+// names. Each manifest row is published one at a time (see publishBook) so a
+// large batch doesn't hold every file in flight at once.
 //
 // books.csv columns: title, author, description, genre, subgenre, manuscript, cover
 // `manuscript` and `cover` are paths relative to the chosen folder.
 
 const COLUMNS = ["title", "author", "description", "genre", "subgenre", "manuscript", "cover"];
 const MANUSCRIPT_TYPES = [".pdf", ".epub"];
-const IMAGE_TYPES = [".jpg", ".jpeg", ".png", ".webp", ".gif"];
-// Cloud Run rejects request bodies over 32 MiB, so these fail in production.
-const REQUEST_LIMIT = 32 * 1024 * 1024;
 
 const hasExt = (name, exts) => exts.some((ext) => name.toLowerCase().endsWith(ext));
 // macOS may store names decomposed (é as e + ◌́); compare in one form.
@@ -52,17 +49,16 @@ const buildJobs = (rows, filesByPath) => {
     if (!row.manuscript) errors.push("No manuscript");
     else if (!manuscript) errors.push(`Manuscript not found: ${row.manuscript}`);
     else if (!hasExt(manuscript.name, MANUSCRIPT_TYPES)) errors.push("Manuscript isn't a PDF or EPUB");
+    else if (manuscript.size > MANUSCRIPT_LIMIT) errors.push(`${formatSize(manuscript.size)}: over the ${MANUSCRIPT_LIMIT >> 20} MB limit`);
 
     const cover = row.cover ? filesByPath.get(normPath(row.cover)) : null;
     if (row.cover && !cover) errors.push(`Cover not found: ${row.cover}`);
-    else if (cover && !hasExt(cover.name, IMAGE_TYPES)) errors.push("Cover isn't an image");
+    else if (cover && !hasExt(cover.name, COVER_TYPES)) errors.push("Cover isn't a JPEG, PNG, WebP or GIF");
+    else if (cover && cover.size > COVER_LIMIT) errors.push(`Cover is over the ${COVER_LIMIT >> 20} MB limit`);
 
     if (row.genre && genres.size && !genres.has(row.genre)) warnings.push(`"${row.genre}" isn't in the genre catalog`);
     if (row.subgenre && subgenres.length && !subgenres.some((s) => s.genre === row.genre && s.value === row.subgenre)) {
       warnings.push(`"${row.subgenre}" isn't a ${row.genre || "catalog"} subgenre`);
-    }
-    if (manuscript && manuscript.size + (cover?.size ?? 0) > REQUEST_LIMIT) {
-      warnings.push(`${formatSize(manuscript.size)}: over the 32 MB production upload limit`);
     }
 
     return {
@@ -77,7 +73,8 @@ const buildJobs = (rows, filesByPath) => {
   });
 };
 
-const STATUS_LABEL = { uploading: "Uploading…", done: "Uploaded", failed: "Failed" };
+const STATUS_LABEL = { done: "Uploaded", failed: "Failed" };
+const statusLabel = (st) => (st?.state === "uploading" ? `Uploading ${Math.round(st.progress * 100)}%` : STATUS_LABEL[st?.state] ?? "Ready");
 
 const BulkUploadPage = () => {
   const queryClient = useQueryClient();
@@ -130,25 +127,23 @@ const BulkUploadPage = () => {
     let uploaded = 0;
     for (const [i, job] of pending.entries()) {
       setRunning({ at: i + 1, of: pending.length });
-      setStatus((s) => ({ ...s, [job.key]: { state: "uploading" } }));
+      setStatus((s) => ({ ...s, [job.key]: { state: "uploading", progress: 0 } }));
       try {
         const { row } = job;
-        const data = new FormData();
-        data.append("title", row.title);
-        data.append("author_name", row.author ?? "");
-        data.append("description", row.description);
-        data.append("genre", row.genre);
-        data.append("subgenre", row.subgenre ?? "");
-        data.append("notify", String(notifyReaders));
-        data.append("manuscript", job.manuscript);
-        if (job.cover) data.append("cover", job.cover);
-        await api.upload("/books/upload", data);
+        const details = {
+          title: row.title,
+          author_name: row.author ?? "",
+          description: row.description,
+          genre: row.genre,
+          subgenre: row.subgenre ?? "",
+          notify: notifyReaders,
+        };
+        await publishBook(details, job.manuscript, job.cover, (progress) =>
+          setStatus((s) => ({ ...s, [job.key]: { state: "uploading", progress } })));
         uploaded++;
         setStatus((s) => ({ ...s, [job.key]: { state: "done" } }));
       } catch (err) {
-        // A 413 comes from the platform, not the API, so it has no useful body.
-        const message = err.status === 413 ? "Too large for the server" : err.message;
-        setStatus((s) => ({ ...s, [job.key]: { state: "failed", message } }));
+        setStatus((s) => ({ ...s, [job.key]: { state: "failed", message: err.message } }));
       }
     }
     setRunning(null);
@@ -229,7 +224,7 @@ const BulkUploadPage = () => {
                   tags={tags.length ? tags : null}
                   trailing={
                     <span className={`text-xs font-extrabold whitespace-nowrap ${st?.state === "done" ? "text-link" : "text-ink-holder"}`}>
-                      {job.errors.length ? "Skipped" : STATUS_LABEL[st?.state] ?? "Ready"}
+                      {job.errors.length ? "Skipped" : statusLabel(st)}
                     </span>
                   }
                 />
