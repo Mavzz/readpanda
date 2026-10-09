@@ -42,6 +42,21 @@ jobs:
       run:
         working-directory: packages/api-go
 
+    # For the handler tests; see internal/testdb.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: readpanda
+          POSTGRES_PASSWORD: readpanda
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U readpanda"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -52,10 +67,14 @@ jobs:
           go-version-file: packages/api-go/go.mod
           cache-dependency-path: packages/api-go/go.sum
 
-      # Fail here, in seconds, rather than minutes into a Cloud Build.
-      - name: Vet and build
+      # Fail here, in seconds, rather than minutes into a Cloud Build — and
+      # never ship a revision whose tests fail.
+      - name: Vet, test and build
+        env:
+          TEST_DATABASE_URL: postgres://readpanda:readpanda@localhost:5432/postgres?sslmode=disable
         run: |
           go vet ./...
+          go test -count=1 ./...
           go build ./...
 
       - name: Authenticate to Google Cloud
