@@ -111,13 +111,15 @@ reaches this server at `localhost:3000`. See the mobile repo's `docs/RUN.md`.
 ## Working on the code
 
 ```
-cmd/server/main.go     Entry point: config, connections, every route
+cmd/server/main.go     Entry point: config, connections, start the server
 internal/config        Environment variables (.env.local locally)
 internal/database      PostgreSQL connection
 internal/handlers      One file per area: users, books, rooms, comments, ...
 internal/middleware    CORS, request logging, auth
 internal/models        Request and response types
 internal/notify        Inbox writes and push fan-out
+internal/server        The router: every route and its middleware
+internal/testdb        Throwaway Postgres databases for tests
 internal/utils         JWT, passwords, R2, Firebase, FCM
 scripts/               Schema, seeds and migration history
 ```
@@ -127,8 +129,27 @@ Before you push:
 ```bash
 gofmt -l .        # should print nothing
 go vet ./...
+go test ./...
 go build ./...
 ```
+
+### Tests
+
+Unit tests sit next to the code they cover (`*_test.go`). The handler tests in
+`internal/server` drive the real router against a real PostgreSQL: each run
+creates a fresh database from `scripts/readpanda_schema.sql`, empties every
+table between tests, and drops the database at the end. Point them at any
+server you can create databases on:
+
+```bash
+TEST_DATABASE_URL="postgres://localhost:5432/postgres?sslmode=disable" go test ./...
+```
+
+Without `TEST_DATABASE_URL` those tests are skipped and the rest still run.
+Add `-v` to see the request log. CI (`.github/workflows/ci.yml`) runs the full
+suite on every pull request, and the deploy workflow won't ship if it fails —
+so a migration that isn't folded into `readpanda_schema.sql` shows up as a
+failing test rather than a broken fresh database.
 
 ### Changing the schema
 

@@ -1,0 +1,105 @@
+name: CI
+
+# Tests for the Go API and the writer portal on every pull request and on
+# pushes to the long-lived branches. Each job only runs when its package (or
+# this file) changed.
+
+on:
+  pull_request:
+  push:
+    branches: ["main", "develop/**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      portal: ${{ steps.filter.outputs.portal }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            api:
+              - "packages/api-go/**"
+              - ".github/workflows/ci.yml"
+            portal:
+              - "packages/portal/**"
+              - "package-lock.json"
+              - ".github/workflows/ci.yml"
+
+  api-go:
+    name: API (Go)
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: packages/api-go
+
+    # A real Postgres for the handler tests in internal/server; each test run
+    # creates its own database from scripts/readpanda_schema.sql.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: readpanda
+          POSTGRES_PASSWORD: readpanda
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U readpanda"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgres://readpanda:readpanda@localhost:5432/postgres?sslmode=disable
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: packages/api-go/go.mod
+          cache-dependency-path: packages/api-go/go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -count=1 ./...
+
+  portal:
+    name: Portal
+    needs: changes
+    if: needs.changes.outputs.portal == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        run: npm test --workspace=readpanda-writer-portal
+
+      - name: Build
+        run: npm run build --workspace=readpanda-writer-portal
