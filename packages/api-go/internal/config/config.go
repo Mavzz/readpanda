@@ -30,6 +30,16 @@ type Config struct {
 	GoogleClientID    string
 	GoogleIOSClientID string
 
+	// Sign in with Apple. The bundle id is the identity token's audience. The
+	// key (team, key id, .p8 contents — from APPLE_PRIVATE_KEY or the file at
+	// APPLE_PRIVATE_KEY_PATH) signs the client secret used to
+	// exchange and revoke Apple tokens; without it Apple sign-in still works,
+	// but deleting an Apple account can't revoke its token.
+	AppleBundleID   string
+	AppleTeamID     string
+	AppleKeyID      string
+	ApplePrivateKey string
+
 	// Firebase
 	FirebaseType               string
 	FirebaseProjectID          string
@@ -68,6 +78,19 @@ func Load() *Config {
 		log.Fatal("JWT_SECRET and JWT_REFRESH_SECRET must both be set")
 	}
 
+	// The Sign in with Apple key: inline in APPLE_PRIVATE_KEY, or — as in
+	// production, mounted from Secret Manager like the Firebase service
+	// account — a .p8 file at APPLE_PRIVATE_KEY_PATH. Optional: without it
+	// Apple sign-in works, but Apple tokens can't be revoked.
+	applePrivateKey := getEnv("APPLE_PRIVATE_KEY", "")
+	if path := getEnv("APPLE_PRIVATE_KEY_PATH", ""); applePrivateKey == "" && path != "" {
+		if raw, err := os.ReadFile(path); err != nil {
+			log.Printf("APPLE_PRIVATE_KEY_PATH %q unreadable (%v); Apple token revocation is off", path, err)
+		} else {
+			applePrivateKey = string(raw)
+		}
+	}
+
 	return &Config{
 		Port:       getEnv("PORT", "3000"),
 		APIVersion: getEnv("API_VERSION", "/api/v1"),
@@ -84,6 +107,11 @@ func Load() *Config {
 
 		GoogleClientID:    getEnv("GOOGLE_CLIENT_ID", ""),
 		GoogleIOSClientID: getEnv("GOOGLE_IOS_CLIENT_ID", ""),
+
+		AppleBundleID:   getEnv("APPLE_BUNDLE_ID", "com.readpanda.app"),
+		AppleTeamID:     getEnv("APPLE_TEAM_ID", ""),
+		AppleKeyID:      getEnv("APPLE_KEY_ID", ""),
+		ApplePrivateKey: applePrivateKey,
 
 		FirebaseType:               getEnv("FIREBASE_TYPE", "service_account"),
 		FirebaseProjectID:          getEnv("FIREBASE_PROJECT_ID", ""),

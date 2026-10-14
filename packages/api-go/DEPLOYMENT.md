@@ -33,7 +33,7 @@ gcloud run deploy readpanda-backend \
   --allow-unauthenticated \
   --set-build-env-vars GOOGLE_BUILDABLE=./cmd/server \
   --env-vars-file env.yaml \
-  --set-secrets=/secrets/firebase/sa.json=firebase-sa:latest
+  --set-secrets=/secrets/firebase/sa.json=firebase-sa:latest,/secrets/apple/key.p8=apple-private-key:latest
 ```
 
 Cloud Run builds the code in Google Cloud (you don't need Docker), then
@@ -49,8 +49,26 @@ What each flag is for:
 - `GOOGLE_BUILDABLE=./cmd/server` tells the Go buildpack where `main` is.
 - `--env-vars-file env.yaml` replaces **all** env vars on each deploy. A value
   missing from the file is gone from the service.
-- `--set-secrets=...` mounts the Firebase service account as a file at
-  `/secrets/firebase/sa.json`, which `FIREBASE_SERVICE_ACCOUNT_PATH` points to.
+- `--set-secrets=...` mounts two secrets as files: the Firebase service
+  account at `/secrets/firebase/sa.json` (`FIREBASE_SERVICE_ACCOUNT_PATH`) and
+  the Sign in with Apple key at `/secrets/apple/key.p8`
+  (`APPLE_PRIVATE_KEY_PATH`). Each needs its own directory.
+
+### The Sign in with Apple key (one-time)
+
+The `.p8` from Apple Developer → Keys (downloadable once). Store it like the
+Firebase service account, then give the Cloud Run service account access:
+
+```bash
+gcloud secrets create apple-private-key --data-file=AuthKey_<KEYID>.p8
+PROJECT_NUMBER=$(gcloud projects describe $(gcloud config get project) --format='value(projectNumber)')
+gcloud secrets add-iam-policy-binding apple-private-key \
+  --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+Until it's mounted, Apple sign-in still works; the server logs that Apple
+token revocation is off.
 
 ### Check the deploy
 
@@ -106,6 +124,13 @@ GOOGLE_CLIENT_ID: "....apps.googleusercontent.com"
 GOOGLE_IOS_CLIENT_ID: "....apps.googleusercontent.com"
 
 FIREBASE_SERVICE_ACCOUNT_PATH: "/secrets/firebase/sa.json"
+
+# Sign in with Apple. The key itself is the apple-private-key secret, mounted
+# by --set-secrets; only its path and id go here.
+APPLE_BUNDLE_ID: "com.readpanda.app"
+APPLE_TEAM_ID: "6F6H5A6JCC"
+APPLE_KEY_ID: "<10-character key id>"
+APPLE_PRIVATE_KEY_PATH: "/secrets/apple/key.p8"
 
 R2_ENDPOINT: "https://<account-id>.r2.cloudflarestorage.com"
 R2_ACCESS_KEY_ID: "..."
