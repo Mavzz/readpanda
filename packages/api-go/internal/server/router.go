@@ -43,6 +43,7 @@ func NewRouter(cfg *config.Config) http.Handler {
 
 	// User routes
 	router.HandleFunc(apiPrefix+"/users", userHandler.GetUsers).Methods("GET")
+	router.HandleFunc(apiPrefix+"/users/me", userHandler.DeleteMe).Methods("DELETE", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/signup", userHandler.CreateUser).Methods("POST", "OPTIONS")
 	// Public, so rate-limited: it says whether a username exists (sign-up R3.2).
 	router.HandleFunc(apiPrefix+"/signup/available", middleware.RateLimit(30, userHandler.UsernameAvailable)).Methods("GET")

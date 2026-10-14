@@ -68,6 +68,17 @@ var (
 
 const minPasswordLength = 8
 
+// deletedReaderUsername is the reserved account a deleted reader's comments
+// move to (scripts/migrate_account_deletion.sql; app spec account-deletion
+// R5.4). Nobody may take the name, even before that row exists.
+const deletedReaderUsername = "deleted.reader"
+
+// deletedReaderUUID and deletedReaderEmail complete that reserved row.
+const (
+	deletedReaderUUID  = "00000000-0000-0000-0000-000000000000"
+	deletedReaderEmail = "deleted@readpanda.invalid"
+)
+
 // fieldError writes {"error", "field"} so the app can show the message under
 // the field it's about (spec R4.1).
 func fieldError(w http.ResponseWriter, status int, field, message string) {
@@ -85,6 +96,8 @@ func validateSignup(req *models.SignupRequest) (string, string) {
 	switch {
 	case !usernamePattern.MatchString(req.Username):
 		return "username", "Use 3–20 letters, numbers, dots or underscores."
+	case req.Username == deletedReaderUsername:
+		return "username", "That username is taken."
 	case !emailPattern.MatchString(req.Email):
 		return "email", "Enter a valid email address."
 	case len([]rune(req.Password)) < minPasswordLength:
@@ -93,8 +106,13 @@ func validateSignup(req *models.SignupRequest) (string, string) {
 	return "", ""
 }
 
-// usernameTaken reports whether a name is in use, ignoring case.
+// usernameTaken reports whether a name is in use, ignoring case. The reserved
+// name always is, so /signup/available and the Apple and Google name picks
+// never offer it.
 func usernameTaken(name string) (bool, error) {
+	if strings.ToLower(name) == deletedReaderUsername {
+		return true, nil
+	}
 	var taken bool
 	err := database.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(username) = $1)", name).Scan(&taken)
 	return taken, err
@@ -866,4 +884,149 @@ func storeRefreshToken(tx dbExecutor, userID, refreshToken string) error {
 		refreshToken, expiresAt, tokenID,
 	)
 	return err
+}
+
+// DeleteMe — DELETE /users/me (app spec account-deletion R4–R6).
+// Deletes the caller's account for good, keeping what other people share
+// with them: rooms they created pass on, their comments stay as "Deleted
+// reader", and books they uploaded stay in the catalogue. 204 also when
+// the account is already gone, so a retry is harmless.
+func (h *UserHandler) DeleteMe(w http.ResponseWriter, r *http.Request) {
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	if !ok {
+		return
+	}
+	appleToken, err := deleteAccount(userID)
+	if err != nil {
+		log.Printf("delete account %s: %v", userID, err)
+		http.Error(w, `{"error": "Couldn't delete the account"}`, http.StatusInternalServerError)
+		return
+	}
+	// After the commit, so a slow or failed call to Apple never undoes a
+	// deletion the reader asked for (R4.3). Before replying, though: Cloud
+	// Run may stop giving the instance CPU once the response is sent.
+	if appleToken != "" {
+		if key := h.appleKey(); !key.Configured() {
+			log.Printf("apple: key not configured, not revoking the token of deleted account %s", userID)
+		} else if err := utils.RevokeAppleToken(key, appleToken); err != nil {
+			log.Printf("apple: revoking the token of deleted account %s: %v", userID, err)
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteAccount does the whole deletion in one transaction: all of it
+// happens, or none (R4.2). It returns the account's stored Apple refresh
+// token, if any, for the caller to revoke once this has committed.
+func deleteAccount(userID string) (string, error) {
+	if userID == deletedReaderUUID {
+		return "", nil
+	}
+	tx, err := database.DB.Begin()
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	var appleToken sql.NullString
+	err = tx.QueryRow(`SELECT apple_refresh_token FROM users WHERE uuid = $1 FOR UPDATE`, userID).Scan(&appleToken)
+	if err == sql.ErrNoRows {
+		return "", nil // already deleted
+	}
+	if err != nil {
+		return "", fmt.Errorf("read user: %w", err)
+	}
+
+	// The row comments move to. Normally made by migrate_account_deletion.sql;
+	// made here too so deletion never depends on that having run.
+	if _, err := tx.Exec(
+		`INSERT INTO users (uuid, username, email, password, isactive, role)
+		 VALUES ($1, $2, $3, NULL, false, 'user') ON CONFLICT (uuid) DO NOTHING`,
+		deletedReaderUUID, deletedReaderUsername, deletedReaderEmail,
+	); err != nil {
+		return "", fmt.Errorf("deleted reader row: %w", err)
+	}
+
+	// Rooms they created: to the member who joined earliest, ties broken by
+	// id so it's always the same one; a room nobody else is in goes (R5.1).
+	if err := handOverRooms(tx, userID); err != nil {
+		return "", err
+	}
+
+	// Others' replies hang off these, so the comments stay, under the reserved
+	// account (R5.2). client_id is unique per author and only de-duplicates
+	// the author's own retries, so it's cleared.
+	if _, err := tx.Exec(
+		`UPDATE book_comments SET user_id = $1, client_id = NULL WHERE user_id = $2`,
+		deletedReaderUUID, userID,
+	); err != nil {
+		return "", fmt.Errorf("comments: %w", err)
+	}
+	// Books they uploaded stay in the catalogue (R5.3); books.user_id has no
+	// ON DELETE, so it would otherwise block the delete.
+	if _, err := tx.Exec(`UPDATE books SET user_id = NULL WHERE user_id = $1`, userID); err != nil {
+		return "", fmt.Errorf("books: %w", err)
+	}
+	// No foreign key to users, so it wouldn't go on its own.
+	if _, err := tx.Exec(`DELETE FROM reading_progress WHERE user_id = $1`, userID); err != nil {
+		return "", fmt.Errorf("reading progress: %w", err)
+	}
+	// Everything else of theirs cascades: tokens, devices, notifications,
+	// preferences, buckets, highlights, likes, reads, memberships (R4.1).
+	if _, err := tx.Exec(`DELETE FROM users WHERE uuid = $1`, userID); err != nil {
+		return "", fmt.Errorf("user: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return appleToken.String, nil
+}
+
+// handOverRooms passes each room the user created to its earliest-joined
+// other member, who becomes its admin, or deletes it when they're alone in
+// it (which cascades its comments and memberships).
+func handOverRooms(tx *sql.Tx, userID string) error {
+	rows, err := tx.Query(`SELECT id FROM rooms WHERE admin_id = $1 FOR UPDATE`, userID)
+	if err != nil {
+		return fmt.Errorf("rooms: %w", err)
+	}
+	var roomIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("rooms: %w", err)
+		}
+		roomIDs = append(roomIDs, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("rooms: %w", err)
+	}
+
+	for _, roomID := range roomIDs {
+		var next string
+		err := tx.QueryRow(
+			`SELECT user_id FROM room_members
+			 WHERE room_id = $1 AND user_id <> $2
+			 ORDER BY joined_at NULLS LAST, user_id LIMIT 1`,
+			roomID, userID,
+		).Scan(&next)
+		if err == sql.ErrNoRows {
+			if _, err := tx.Exec(`DELETE FROM rooms WHERE id = $1`, roomID); err != nil {
+				return fmt.Errorf("delete room %s: %w", roomID, err)
+			}
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("next admin of %s: %w", roomID, err)
+		}
+		if _, err := tx.Exec(`UPDATE rooms SET admin_id = $1, updated_at = NOW() WHERE id = $2`, next, roomID); err != nil {
+			return fmt.Errorf("hand over %s: %w", roomID, err)
+		}
+		if _, err := tx.Exec(`UPDATE room_members SET role = 'admin' WHERE room_id = $1 AND user_id = $2`, roomID, next); err != nil {
+			return fmt.Errorf("new admin role in %s: %w", roomID, err)
+		}
+	}
+	return nil
 }

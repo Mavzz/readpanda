@@ -21,6 +21,8 @@ func TestValidateSignup(t *testing.T) {
 		{"email without domain", models.SignupRequest{Username: "mira", Email: "mira@", Password: "12345678"}, "email", "", ""},
 		{"email without dot", models.SignupRequest{Username: "mira", Email: "mira@hey", Password: "12345678"}, "email", "", ""},
 		{"password short", models.SignupRequest{Username: "mira", Email: "mira@hey.com", Password: "1234567"}, "password", "", ""},
+		{"reserved name", models.SignupRequest{Username: "deleted.reader", Email: "a@b.co", Password: "12345678"}, "username", "", ""},
+		{"reserved name, any case", models.SignupRequest{Username: " Deleted.Reader ", Email: "a@b.co", Password: "12345678"}, "username", "", ""},
 		{"password multibyte counts runes", models.SignupRequest{Username: "mira", Email: "mira@hey.com", Password: "ééééééé"}, "password", "", ""},
 	}
 	for _, c := range cases {
@@ -53,6 +55,17 @@ func TestUsernameFrom(t *testing.T) {
 		}
 		if !usernamePattern.MatchString(got) {
 			t.Errorf("usernameFrom(%q) = %q breaks the sign-up rules", in, got)
+		}
+	}
+}
+
+// The reserved name reads as taken without a database lookup, so it holds
+// even where the Deleted reader row doesn't exist (account-deletion R5.4).
+func TestUsernameTakenReserved(t *testing.T) {
+	for _, name := range []string{"deleted.reader", "Deleted.Reader"} {
+		taken, err := usernameTaken(name)
+		if err != nil || !taken {
+			t.Errorf("usernameTaken(%q) = %v, %v; want true, nil", name, taken, err)
 		}
 	}
 }
