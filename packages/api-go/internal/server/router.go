@@ -1,0 +1,151 @@
+package server
+
+import (
+	"net/http"
+
+	"github.com/Mavzz/readpanda/api-go/internal/config"
+	"github.com/Mavzz/readpanda/api-go/internal/handlers"
+	"github.com/Mavzz/readpanda/api-go/internal/middleware"
+	"github.com/gorilla/mux"
+)
+
+// NewRouter builds the API's full routing table. It lives outside main so the
+// handler tests can drive exactly the routes, methods and middleware that
+// production serves.
+func NewRouter(cfg *config.Config) http.Handler {
+	// Initialize handlers
+	userHandler := handlers.NewUserHandler(cfg)
+	bookHandler := handlers.NewBookHandler(cfg)
+	preferencesHandler := handlers.NewPreferencesHandler(cfg)
+	notificationHandler := handlers.NewNotificationHandler(cfg)
+	bucketHandler := handlers.NewBucketHandler(cfg)
+	roomHandler := handlers.NewRoomHandler(cfg)
+	progressHandler := handlers.NewProgressHandler(cfg)
+	commentHandler := handlers.NewCommentHandler(cfg)
+	highlightHandler := handlers.NewHighlightHandler(cfg)
+	discoverHandler := handlers.NewDiscoverHandler(cfg)
+	adminHandler := handlers.NewAdminHandler(cfg)
+
+	// Create router
+	router := mux.NewRouter()
+
+	// Apply middleware
+	router.Use(middleware.CORS)
+	router.Use(middleware.Logging)
+
+	// Handle CORS preflight for all routes
+	router.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}).Methods("OPTIONS")
+
+	// API version prefix
+	apiPrefix := cfg.APIVersion
+
+	// User routes
+	router.HandleFunc(apiPrefix+"/users", userHandler.GetUsers).Methods("GET")
+	router.HandleFunc(apiPrefix+"/signup", userHandler.CreateUser).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/token/refresh", userHandler.RefreshAccessToken).Methods("POST", "OPTIONS")
+
+	// Authentication routes
+	router.HandleFunc(apiPrefix+"/auth/login", userHandler.LoginUser).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/auth/google", userHandler.GoogleAuth).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/auth/logout", userHandler.LogoutUser).Methods("POST", "OPTIONS")
+
+	// User preferences routes
+	router.HandleFunc(apiPrefix+"/user/preferences", preferencesHandler.GetUserPreferences).Methods("GET")
+	router.HandleFunc(apiPrefix+"/user/preferences", preferencesHandler.UpdateUserPreferences).Methods("POST", "OPTIONS")
+
+	// Books routes
+	router.HandleFunc(apiPrefix+"/books/upload-urls", bookHandler.CreateUploadURLs).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/books/upload", bookHandler.PublishBook).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/books", bookHandler.GetBooksForUser).Methods("GET")
+	router.HandleFunc(apiPrefix+"/books/all", bookHandler.GetAllBooks).Methods("GET")
+	router.HandleFunc(apiPrefix+"/books/seed", bookHandler.SeedBooksFromStorage).Methods("POST", "OPTIONS")
+	// After /books/all: mux takes the first route that matches, so the literal
+	// path has to be registered before the {bookId} pattern would swallow it.
+	router.HandleFunc(apiPrefix+"/books/{bookId}", discoverHandler.GetBookDetail).Methods("GET")
+
+	// Discover tab (8a)
+	router.HandleFunc(apiPrefix+"/discover", discoverHandler.GetDiscover).Methods("GET")
+
+	// Genres / Subgenres routes
+	router.HandleFunc(apiPrefix+"/genres", preferencesHandler.GetGenres).Methods("GET")
+	router.HandleFunc(apiPrefix+"/subgenres", preferencesHandler.GetSubgenres).Methods("GET")
+
+	// Notifications routes
+	router.HandleFunc(apiPrefix+"/notifications", notificationHandler.GetUserNotifications).Methods("GET")
+	router.HandleFunc(apiPrefix+"/notifications/unread/count", notificationHandler.GetUnreadNotificationCount).Methods("GET")
+	router.HandleFunc(apiPrefix+"/notifications/{id}/read", notificationHandler.MarkNotificationRead).Methods("PUT", "OPTIONS")
+
+	// Push device registration — one row per FCM token, owned by the caller.
+	router.HandleFunc(apiPrefix+"/users/me/devices", notificationHandler.RegisterDevice).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/users/me/devices/{token}", notificationHandler.UnregisterDevice).Methods("DELETE", "OPTIONS")
+
+	// User Buckets routes
+	router.HandleFunc(apiPrefix+"/users/me/buckets", bucketHandler.ListUserBuckets).Methods("GET")
+	router.HandleFunc(apiPrefix+"/users/me/buckets", bucketHandler.CreateUserBucket).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}", bucketHandler.UpdateUserBucket).Methods("PUT", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}", bucketHandler.DeleteUserBucket).Methods("DELETE", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}/books", bucketHandler.AddBooksToBucket).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}/books", bucketHandler.GetUserBucketBooks).Methods("GET")
+	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}/books/{bookId}", bucketHandler.RemoveBookFromBucket).Methods("DELETE", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/users/me/buckets/{id}/order", bucketHandler.ReorderUserBucket).Methods("PUT", "OPTIONS")
+
+	// Curated "Our Picks" routes
+	// GET  — returns active buckets for mobile, all buckets for portal (X-Application-Type: portal)
+	// POST/PUT/DELETE — admin management (portal only)
+	router.HandleFunc(apiPrefix+"/home/our-picks", bucketHandler.GetOurPicks).Methods("GET")
+	router.HandleFunc(apiPrefix+"/home/our-picks", bucketHandler.AdminCreateCuratedBucket).Methods("POST")
+	router.HandleFunc(apiPrefix+"/home/our-picks/{bucketId}", bucketHandler.AdminUpdateCuratedBucket).Methods("PUT")
+	router.HandleFunc(apiPrefix+"/home/our-picks/{bucketId}", bucketHandler.AdminDeleteCuratedBucket).Methods("DELETE")
+	router.HandleFunc(apiPrefix+"/home/our-picks/{bucketId}/books", bucketHandler.GetOurPicksBucketBooks).Methods("GET")
+	router.HandleFunc(apiPrefix+"/home/our-picks/{bucketId}/books", bucketHandler.AdminAddBooksToCuratedBucket).Methods("POST")
+	router.HandleFunc(apiPrefix+"/home/our-picks/{bucketId}/books/{bookId}", bucketHandler.AdminRemoveBookFromCuratedBucket).Methods("DELETE")
+
+	// Room routes
+	router.HandleFunc(apiPrefix+"/room/create", roomHandler.CreateRoom).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/my-rooms", roomHandler.GetMyRooms).Methods("GET", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/join", roomHandler.JoinRoom).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}", roomHandler.GetRoomDetail).Methods("GET", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}/reading", roomHandler.SetRoomReading).Methods("PATCH", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}", roomHandler.DeleteRoom).Methods("DELETE", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}/members/me", roomHandler.LeaveRoom).Methods("DELETE", "OPTIONS")
+
+	// Reading progress routes
+	// Progress is personal and keys on the book, so it is published once and
+	// read back per room — a reader in three rooms reading the same book has
+	// one position, not three.
+	router.HandleFunc(apiPrefix+"/progress", progressHandler.GetMyProgress).Methods("GET", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/progress/{bookId}", progressHandler.PutMyProgress).Methods("PUT", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}/progress", progressHandler.GetRoomProgress).Methods("GET", "OPTIONS")
+
+	// Comment routes
+	// Comments key on the room AND the book: the same book read in two rooms
+	// is two conversations. What a reader is allowed to see is decided against
+	// their own furthest_page, server-side — everything still ahead of them
+	// comes back as a bare count. See internal/handlers/comments.go.
+	router.HandleFunc(apiPrefix+"/room/{id}/book/{bookId}/comments", commentHandler.GetBookComments).Methods("GET", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}/book/{bookId}/comments", commentHandler.CreateComment).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}/book/{bookId}/comments/read", commentHandler.MarkRead).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/comments/{commentId}/like", commentHandler.LikeComment).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/comments/{commentId}/like", commentHandler.UnlikeComment).Methods("DELETE", "OPTIONS")
+
+	// Highlight routes
+	// Personal: keyed on the reader and the book, never a room, and only ever
+	// returned to their author. See internal/handlers/highlights.go.
+	router.HandleFunc(apiPrefix+"/books/{bookId}/highlights", highlightHandler.GetBookHighlights).Methods("GET", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/books/{bookId}/highlights", highlightHandler.CreateHighlight).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/highlights/{highlightId}", highlightHandler.DeleteHighlight).Methods("DELETE", "OPTIONS")
+
+	// Admin data browser (portal only, admin role required)
+	// Generic view over every table in the public schema; see internal/handlers/admin.go.
+	router.HandleFunc(apiPrefix+"/admin/books/enrich", bookHandler.AdminEnrichBooks).Methods("POST")
+	router.HandleFunc(apiPrefix+"/admin/tables", adminHandler.ListTables).Methods("GET")
+	router.HandleFunc(apiPrefix+"/admin/tables/{table}", adminHandler.GetTableSchema).Methods("GET")
+	router.HandleFunc(apiPrefix+"/admin/tables/{table}/rows", adminHandler.GetTableRows).Methods("GET")
+	router.HandleFunc(apiPrefix+"/admin/tables/{table}/rows", adminHandler.InsertTableRow).Methods("POST")
+	router.HandleFunc(apiPrefix+"/admin/tables/{table}/rows", adminHandler.DeleteTableRow).Methods("DELETE")
+	router.HandleFunc(apiPrefix+"/admin/users/{uuid}", adminHandler.GetUserDetail).Methods("GET")
+
+	return router
+}

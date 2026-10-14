@@ -2,6 +2,7 @@
 -- PostgreSQL database dump
 --
 
+
 -- Dumped from database version 18.3 (Homebrew)
 -- Dumped by pg_dump version 18.3 (Homebrew)
 
@@ -114,7 +115,7 @@ CREATE TABLE public.book_highlights (
 CREATE TABLE public.books (
     book_id character varying(50) NOT NULL,
     user_id uuid,
-    title character varying(50),
+    title character varying(255),
     description text,
     subgenre character varying(50),
     genre character varying(50),
@@ -124,7 +125,13 @@ CREATE TABLE public.books (
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     status integer DEFAULT 0,
-    earnings numeric DEFAULT 0
+    earnings numeric DEFAULT 0,
+    source_title character varying(255),
+    metadata_checked_at timestamp without time zone,
+    author_name character varying(255),
+    page_count integer,
+    author_from_lookup boolean DEFAULT false NOT NULL,
+    pages_from_lookup boolean DEFAULT false NOT NULL
 );
 
 
@@ -152,7 +159,9 @@ CREATE TABLE public.curated_buckets (
     is_active boolean DEFAULT true,
     created_at timestamp without time zone DEFAULT now(),
     updated_at timestamp without time zone DEFAULT now(),
-    book_count integer
+    book_count integer,
+    description text,
+    genre_tags text[] DEFAULT '{}'::text[] NOT NULL
 );
 
 
@@ -298,7 +307,7 @@ CREATE TABLE public.rooms (
     current_bucket_id character varying(50),
     current_bucket_type character varying(10),
     CONSTRAINT rooms_bucket_pair_check CHECK (((current_bucket_id IS NULL) = (current_bucket_type IS NULL))),
-    CONSTRAINT rooms_current_bucket_type_check CHECK (((current_bucket_type IS NULL) OR ((current_bucket_type)::text = ANY ((ARRAY['user'::character varying, 'curated'::character varying])::text[]))))
+    CONSTRAINT rooms_current_bucket_type_check CHECK (((current_bucket_type IS NULL) OR ((current_bucket_type)::text = ANY (ARRAY[('user'::character varying)::text, ('curated'::character varying)::text]))))
 );
 
 
@@ -309,7 +318,8 @@ CREATE TABLE public.rooms (
 CREATE TABLE public.user_bucket_books (
     bucket_id character varying(50) NOT NULL,
     book_id character varying(50) NOT NULL,
-    added_at timestamp without time zone DEFAULT now()
+    added_at timestamp without time zone DEFAULT now(),
+    sort_order integer DEFAULT 0
 );
 
 
@@ -323,7 +333,8 @@ CREATE TABLE public.user_buckets (
     name character varying(100) NOT NULL,
     created_at timestamp without time zone DEFAULT now(),
     updated_at timestamp without time zone DEFAULT now(),
-    book_count integer
+    book_count integer,
+    source_curated_id character varying(50)
 );
 
 
@@ -632,6 +643,27 @@ CREATE INDEX reading_progress_book_id_idx ON public.reading_progress USING btree
 
 
 --
+-- Name: reading_progress_last_read_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX reading_progress_last_read_at_idx ON public.reading_progress USING btree (last_read_at);
+
+
+--
+-- Name: user_bucket_books_book_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX user_bucket_books_book_id_idx ON public.user_bucket_books USING btree (book_id);
+
+
+--
+-- Name: user_buckets_source_curated_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX user_buckets_source_curated_idx ON public.user_buckets USING btree (user_id, source_curated_id) WHERE (source_curated_id IS NOT NULL);
+
+
+--
 -- Name: book_comment_likes book_comment_likes_comment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -858,4 +890,5 @@ END $$;
 --
 -- PostgreSQL database dump complete
 --
+
 
