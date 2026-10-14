@@ -33,3 +33,7 @@ api-go
 *.crt
 
 serviceAccountKey.json
+
+# go build and VS Code debug builds inside cmd/server
+/cmd/server/server
+__debug_bin*
