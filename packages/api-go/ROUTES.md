@@ -14,9 +14,11 @@ Authorization: Bearer <access_token>
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| POST | `/signup` | No | Register a new user. Body: `{ username, email, password }` (password is AES-encrypted from frontend). Returns access token, refresh token, and user preferences. |
-| POST | `/auth/login` | No | Login with email/username and password. Returns access token, refresh token, and user data. |
+| POST | `/signup` | No | Register a new user. Body: `{ username, email, password }` (plaintext over TLS). Username: 3–20 letters, numbers, `.` or `_`, stored lowercase; password ≥ 8 characters. Returns access token, refresh token, and user preferences. Errors carry the field: `400 { error, field }` for a rule broken (`username` / `email` / `password`), `409 { error, field }` for a taken `username` or `email`. |
+| GET | `/signup/available?username=` | No | Whether a username is free: `{ available, suggestion? }` (a nearby free name when taken). `400 { error, field: "username" }` if the name breaks the rules. Rate-limited to 30 requests a minute per client (`429`). |
+| POST | `/auth/login` | No | Login with email/username and password (username matched case-insensitively, exact match first). Returns access token, refresh token, and user data. |
 | POST | `/auth/google` | No | Authenticate via Google ID token. Body: `{ token }`. Creates account on first login. Returns access/refresh tokens. |
+| POST | `/auth/apple` | No | Sign in with Apple. Body: `{ identity_token, authorization_code?, full_name? }`. Verifies the token against Apple's keys (audience `APPLE_BUNDLE_ID`); finds the account by Apple id, else links one with the same verified email, else creates one (`201`, with preferences). With `APPLE_TEAM_ID`/`APPLE_KEY_ID`/`APPLE_PRIVATE_KEY` set, also stores Apple's refresh token so deleting the account can revoke it. `401` invalid token; `400` if Apple shared no email for a new account. |
 | POST | `/auth/logout` | Yes | Logout the current user. |
 | POST | `/token/refresh` | No | Refresh an expired access token. Body: `{ refresh_token }`. Returns a new access token. |
 
@@ -26,7 +28,7 @@ Authorization: Bearer <access_token>
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| GET | `/users` | No | List all users. Returns `[ { id, username, email, isactive, login_type, uuid, created_at } ]`. |
+| GET | `/users` | Admin | List all users (admin role required; `401` without a token, `403` for non-admins). Returns `[ { username, email, isactive, login_type, uuid, created_at } ]`. |
 
 ---
 

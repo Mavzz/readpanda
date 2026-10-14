@@ -30,6 +30,15 @@ type Config struct {
 	GoogleClientID    string
 	GoogleIOSClientID string
 
+	// Sign in with Apple. The bundle id is the identity token's audience. The
+	// key (team, key id, .p8 contents) signs the client secret used to
+	// exchange and revoke Apple tokens; without it Apple sign-in still works,
+	// but deleting an Apple account can't revoke its token.
+	AppleBundleID   string
+	AppleTeamID     string
+	AppleKeyID      string
+	ApplePrivateKey string
+
 	// Firebase
 	FirebaseType               string
 	FirebaseProjectID          string
@@ -84,6 +93,11 @@ func Load() *Config {
 
 		GoogleClientID:    getEnv("GOOGLE_CLIENT_ID", ""),
 		GoogleIOSClientID: getEnv("GOOGLE_IOS_CLIENT_ID", ""),
+
+		AppleBundleID:   getEnv("APPLE_BUNDLE_ID", "com.readpanda.app"),
+		AppleTeamID:     getEnv("APPLE_TEAM_ID", ""),
+		AppleKeyID:      getEnv("APPLE_KEY_ID", ""),
+		ApplePrivateKey: getEnv("APPLE_PRIVATE_KEY", ""),
 
 		FirebaseType:               getEnv("FIREBASE_TYPE", "service_account"),
 		FirebaseProjectID:          getEnv("FIREBASE_PROJECT_ID", ""),
