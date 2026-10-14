@@ -63,9 +63,12 @@ gcloud iam service-accounts add-iam-policy-binding "$SA" \
 
 echo "== What the deployer may do"
 # Deploy revisions (not change who can invoke the service: that's run.admin),
-# start the source build, and read its logs while it streams.
+# start the source build, and read its logs while it streams. `--source .`
+# also lists the project's buckets to find its run-sources one; bucketViewer
+# allows that without reading any bucket's objects.
 for role in roles/run.developer roles/cloudbuild.builds.editor \
-  roles/logging.viewer roles/serviceusage.serviceUsageConsumer; do
+  roles/logging.viewer roles/serviceusage.serviceUsageConsumer \
+  roles/storage.bucketViewer; do
   gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member "serviceAccount:${SA}" --role "$role" --condition None >/dev/null
 done
