@@ -24,7 +24,8 @@ SET row_security = off;
 CREATE TYPE public.login_type_enum AS ENUM (
     'email',
     'social_google',
-    'ldap'
+    'ldap',
+    'social_apple'
 );
 
 
@@ -379,7 +380,9 @@ CREATE TABLE public.users (
     isactive boolean DEFAULT true,
     login_type public.login_type_enum,
     google_sub text,
-    role character varying(20) DEFAULT 'user'::character varying NOT NULL
+    role character varying(20) DEFAULT 'user'::character varying NOT NULL,
+    apple_sub text,
+    apple_refresh_token text
 );
 
 
@@ -640,6 +643,13 @@ CREATE INDEX notifications_user_created_idx ON public.notifications USING btree 
 --
 
 CREATE INDEX reading_progress_book_id_idx ON public.reading_progress USING btree (book_id);
+
+
+--
+-- Name: users_apple_sub_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX users_apple_sub_key ON public.users USING btree (apple_sub) WHERE (apple_sub IS NOT NULL);
 
 
 --

@@ -369,6 +369,7 @@ type BookCommentsResponse struct {
 const (
 	LoginTypeEmail        = "email"
 	LoginTypeSocialGoogle = "social_google"
+	LoginTypeSocialApple  = "social_apple"
 	LoginTypeLDAP         = "ldap"
 )
 
@@ -392,6 +393,16 @@ type LoginRequest struct {
 }
 
 // TokenResponse represents the token response
+// AppleAuthRequest is POST /auth/apple's body: the identity token Apple gave
+// the app, the one-time authorization code (exchanged for the refresh token
+// that's revoked on account deletion), and the name, which Apple sends only
+// on a user's first sign-in.
+type AppleAuthRequest struct {
+	IdentityToken     string `json:"identity_token"`
+	AuthorizationCode string `json:"authorization_code"`
+	FullName          string `json:"full_name"`
+}
+
 type TokenResponse struct {
 	AccessToken  string `json:"accessToken"`
 	RefreshToken string `json:"refreshToken"`

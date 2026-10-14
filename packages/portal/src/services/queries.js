@@ -26,7 +26,8 @@ export const useOurPicks = () =>
 export const useUserCount = () =>
   useQuery({
     queryKey: ['users-count'],
-    queryFn: async () => (await api.get('/users')).users?.length ?? 0,
+    // GET /users returns a bare array (admin only), not { users }.
+    queryFn: async () => (await api.get('/users'))?.length ?? 0,
   });
 
 export const bookMeta = (book) =>

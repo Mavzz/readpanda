@@ -44,11 +44,14 @@ func NewRouter(cfg *config.Config) http.Handler {
 	// User routes
 	router.HandleFunc(apiPrefix+"/users", userHandler.GetUsers).Methods("GET")
 	router.HandleFunc(apiPrefix+"/signup", userHandler.CreateUser).Methods("POST", "OPTIONS")
+	// Public, so rate-limited: it says whether a username exists (sign-up R3.2).
+	router.HandleFunc(apiPrefix+"/signup/available", middleware.RateLimit(30, userHandler.UsernameAvailable)).Methods("GET")
 	router.HandleFunc(apiPrefix+"/token/refresh", userHandler.RefreshAccessToken).Methods("POST", "OPTIONS")
 
 	// Authentication routes
 	router.HandleFunc(apiPrefix+"/auth/login", userHandler.LoginUser).Methods("POST", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/auth/google", userHandler.GoogleAuth).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/auth/apple", userHandler.AppleAuth).Methods("POST", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/auth/logout", userHandler.LogoutUser).Methods("POST", "OPTIONS")
 
 	// User preferences routes

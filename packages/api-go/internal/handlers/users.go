@@ -2,9 +2,14 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"log"
+	"math/big"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -12,6 +17,7 @@ import (
 	"github.com/Mavzz/readpanda/api-go/internal/database"
 	"github.com/Mavzz/readpanda/api-go/internal/models"
 	"github.com/Mavzz/readpanda/api-go/internal/utils"
+	"golang.org/x/text/unicode/norm"
 	"google.golang.org/api/idtoken"
 )
 
@@ -53,11 +59,305 @@ func (h *UserHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(users)
 }
 
+// Sign-up rules (app spec signup-redesign R3.1, R8.4). New accounts only:
+// usernames made before these rules keep working.
+var (
+	usernamePattern = regexp.MustCompile(`^[a-z0-9._]{3,20}$`)
+	emailPattern    = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+)
+
+const minPasswordLength = 8
+
+// fieldError writes {"error", "field"} so the app can show the message under
+// the field it's about (spec R4.1).
+func fieldError(w http.ResponseWriter, status int, field, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": message, "field": field})
+}
+
+// validateSignup checks a sign-up's fields, returning the first field that
+// fails and why, or "" when all pass. Username and email are normalised in
+// place: trimmed, and lowercase, which is how they're stored and compared.
+func validateSignup(req *models.SignupRequest) (string, string) {
+	req.Username = strings.ToLower(strings.TrimSpace(req.Username))
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	switch {
+	case !usernamePattern.MatchString(req.Username):
+		return "username", "Use 3–20 letters, numbers, dots or underscores."
+	case !emailPattern.MatchString(req.Email):
+		return "email", "Enter a valid email address."
+	case len([]rune(req.Password)) < minPasswordLength:
+		return "password", "Use at least 8 characters."
+	}
+	return "", ""
+}
+
+// usernameTaken reports whether a name is in use, ignoring case.
+func usernameTaken(name string) (bool, error) {
+	var taken bool
+	err := database.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(username) = $1)", name).Scan(&taken)
+	return taken, err
+}
+
+// suggestUsername finds a free name near a taken one: name.reads, name_reads,
+// then name plus two digits. The base is trimmed so every candidate still
+// fits the 20-character rule. "" when nothing nearby is free.
+func suggestUsername(name string) string {
+	base := name
+	if len(base) > 14 {
+		base = base[:14]
+	}
+	candidates := []string{base + ".reads", base + "_reads"}
+	for i := 0; i < 6; i++ {
+		n, err := rand.Int(rand.Reader, big.NewInt(90))
+		if err != nil {
+			break
+		}
+		candidates = append(candidates, fmt.Sprintf("%s%d", base, n.Int64()+10))
+	}
+	for _, c := range candidates {
+		if !usernamePattern.MatchString(c) {
+			continue
+		}
+		if taken, err := usernameTaken(c); err == nil && !taken {
+			return c
+		}
+	}
+	return ""
+}
+
+// UsernameAvailable answers the sign-up form's check when you leave the
+// Username field (app spec R3.2): GET /signup/available?username=mira →
+// { "available": false, "suggestion": "mira.reads" }. No auth; rate-limited
+// where it's routed, since it tells anyone whether a name exists.
+func (h *UserHandler) UsernameAvailable(w http.ResponseWriter, r *http.Request) {
+	name := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("username")))
+	if !usernamePattern.MatchString(name) {
+		fieldError(w, http.StatusBadRequest, "username", "Use 3–20 letters, numbers, dots or underscores.")
+		return
+	}
+	taken, err := usernameTaken(name)
+	if err != nil {
+		http.Error(w, `{"error": "Couldn't check that name"}`, http.StatusInternalServerError)
+		return
+	}
+	resp := map[string]interface{}{"available": !taken}
+	if taken {
+		resp["suggestion"] = suggestUsername(name)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+// usernameFrom makes a sign-up-valid username from a name or an email's local
+// part ("Mira Anand" → "mira.anand", "Zoë" → "zoe"), padded to the 3-character minimum and
+// cut to 20. Not checked for uniqueness.
+func usernameFrom(source string) string {
+	var b strings.Builder
+	// Decompose accented letters ("é" → "e" + accent) so the letter survives
+	// and only the accent is dropped below.
+	for _, r := range norm.NFD.String(strings.ToLower(source)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_', r == '.':
+			b.WriteRune(r)
+		case r == ' ' || r == '-':
+			b.WriteRune('.')
+		}
+	}
+	name := strings.Trim(b.String(), "._")
+	if len(name) < 3 {
+		name += "reader"
+	}
+	if len(name) > 20 {
+		name = strings.TrimRight(name[:20], "._")
+	}
+	return name
+}
+
+// appleKey is the Sign in with Apple key from config; it may be unset.
+func (h *UserHandler) appleKey() utils.AppleKey {
+	return utils.AppleKey{
+		TeamID:     h.Config.AppleTeamID,
+		KeyID:      h.Config.AppleKeyID,
+		PrivateKey: h.Config.ApplePrivateKey,
+		BundleID:   h.Config.AppleBundleID,
+	}
+}
+
+// keepAppleRefreshToken exchanges a sign-in's authorization code for Apple's
+// refresh token and stores it, so deleting the account can revoke it (App
+// Store 5.1.1(v)). Best effort: sign-in doesn't fail over it, and without a
+// configured key it's skipped (logged once per sign-in).
+func (h *UserHandler) keepAppleRefreshToken(userID, code string) {
+	key := h.appleKey()
+	if code == "" || !key.Configured() {
+		if code != "" {
+			log.Printf("apple: key not configured, not storing a refresh token for %s", userID)
+		}
+		return
+	}
+	token, err := utils.ExchangeAppleCode(key, code)
+	if err != nil {
+		log.Printf("apple: code exchange failed for %s: %v", userID, err)
+		return
+	}
+	if _, err := database.DB.Exec("UPDATE users SET apple_refresh_token = $1 WHERE uuid = $2", token, userID); err != nil {
+		log.Printf("apple: storing refresh token failed for %s: %v", userID, err)
+	}
+}
+
+// AppleAuth signs in with Apple (app spec signup-redesign R8.1): the app sends
+// Apple's identity token; a returning user is found by Apple's id, an existing
+// account by its verified email (and linked), and anyone else gets a new
+// account. Same response as /auth/google: 200 for a sign-in, 201 for a
+// sign-up.
+func (h *UserHandler) AppleAuth(w http.ResponseWriter, r *http.Request) {
+	var req models.AppleAuthRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.IdentityToken == "" {
+		http.Error(w, `{"error": "identity_token required"}`, http.StatusBadRequest)
+		return
+	}
+	identity, err := utils.VerifyAppleIdentityToken(req.IdentityToken, h.Config.AppleBundleID)
+	if err != nil {
+		log.Printf("apple: rejected identity token: %v", err)
+		http.Error(w, `{"error": "Invalid Apple token"}`, http.StatusUnauthorized)
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(identity.Email))
+
+	var user models.User
+	err = database.DB.QueryRow("SELECT email, username, uuid, role FROM users WHERE apple_sub = $1", identity.Subject).
+		Scan(&user.Email, &user.Username, &user.UUID, &user.Role)
+	if err == sql.ErrNoRows && email != "" && identity.EmailVerified {
+		// An account made another way with this email: link it, so Apple
+		// signs into it from now on.
+		err = database.DB.QueryRow(
+			"UPDATE users SET apple_sub = $1 WHERE LOWER(email) = $2 AND apple_sub IS NULL RETURNING email, username, uuid, role",
+			identity.Subject, email,
+		).Scan(&user.Email, &user.Username, &user.UUID, &user.Role)
+	}
+	if err != nil && err != sql.ErrNoRows {
+		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if err == nil {
+		accessToken, refreshToken, err := utils.GenerateTokens(user.UUID, user.Role, h.Config.JWTSecret, h.Config.JWTRefreshSecret)
+		if err != nil {
+			http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+		if err := storeRefreshToken(database.DB, user.UUID, refreshToken); err != nil {
+			http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+		h.keepAppleRefreshToken(user.UUID, req.AuthorizationCode)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(models.TokenResponse{
+			Username:     user.Username,
+			Email:        user.Email,
+			AccessToken:  accessToken,
+			RefreshToken: refreshToken,
+		})
+		return
+	}
+
+	// A new account. Apple shares an email on first sign-in unless the user
+	// declined; users.email is required, so there's nothing to create without
+	// one.
+	if email == "" {
+		http.Error(w, `{"error": "Apple didn't share an email. Try again and choose Share My Email or Hide My Email."}`, http.StatusBadRequest)
+		return
+	}
+	// The name if Apple sent one; else the email's local part — unless it's a
+	// private relay address, whose local part is random, so just "reader".
+	source := strings.TrimSpace(req.FullName)
+	if source == "" && !identity.PrivateEmail {
+		source = strings.SplitN(email, "@", 2)[0]
+	}
+	if source == "" {
+		source = "reader"
+	}
+	username := usernameFrom(source)
+	if taken, err := usernameTaken(username); err == nil && taken {
+		if suggestion := suggestUsername(username); suggestion != "" {
+			username = suggestion
+		}
+	}
+
+	tx, err := database.DB.Begin()
+	if err != nil {
+		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	newUserUID := utils.GenerateUserUID()
+	for attempt := 0; ; attempt++ {
+		err = tx.QueryRow(
+			"INSERT INTO users (username, email, isactive, login_type, uuid, apple_sub) VALUES ($1, $2, $3, $4, $5, $6) RETURNING username",
+			username, email, true, models.LoginTypeSocialApple, newUserUID, identity.Subject,
+		).Scan(&user.Username)
+		if err == nil {
+			break
+		}
+		if !isUniqueViolation(err) || attempt >= 5 {
+			http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+		suffix, genErr := utils.GenerateInviteCode()
+		if genErr != nil {
+			http.Error(w, `{"error": "Failed to generate a unique username"}`, http.StatusInternalServerError)
+			return
+		}
+		base := username
+		if len(base) > 13 {
+			base = base[:13]
+		}
+		username = base + "_" + strings.ToLower(suffix)
+	}
+
+	preferencesData, err := initializeUserPreferences(tx, newUserUID)
+	if err != nil {
+		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+	accessToken, refreshToken, err := utils.GenerateTokens(newUserUID, models.RoleUser, h.Config.JWTSecret, h.Config.JWTRefreshSecret)
+	if err != nil {
+		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+	if err = storeRefreshToken(tx, newUserUID, refreshToken); err != nil {
+		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+	h.keepAppleRefreshToken(newUserUID, req.AuthorizationCode)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(models.TokenResponse{
+		Username:     user.Username,
+		Email:        email,
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		Preferences:  preferencesData,
+	})
+}
+
 // CreateUser creates a new user (signup)
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var req models.SignupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	if field, message := validateSignup(&req); field != "" {
+		fieldError(w, http.StatusBadRequest, field, message)
 		return
 	}
 
@@ -68,16 +368,24 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	// Check if user already exists
-	var count int
-	err = tx.QueryRow("SELECT COUNT(*) FROM users WHERE username = $1 OR email = $2", req.Username, req.Email).Scan(&count)
+	// Check if user already exists, and say which field clashes so the app can
+	// show it under that field. Case-insensitive: older accounts may have
+	// mixed-case names.
+	var usernameTaken, emailTaken bool
+	err = tx.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(username) = $1), EXISTS(SELECT 1 FROM users WHERE LOWER(email) = $2)",
+		req.Username, req.Email,
+	).Scan(&usernameTaken, &emailTaken)
 	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
 		return
 	}
-
-	if count > 0 {
-		http.Error(w, `{"error": "User already exists"}`, http.StatusConflict)
+	if usernameTaken {
+		fieldError(w, http.StatusConflict, "username", "That username is taken.")
+		return
+	}
+	if emailTaken {
+		fieldError(w, http.StatusConflict, "email", "An account with this email already exists. Log in instead.")
 		return
 	}
 
@@ -156,7 +464,10 @@ func (h *UserHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 	// Check if user exists
 	var user models.User
 	err := database.DB.QueryRow(
-		"SELECT uuid, username, email, password, role FROM users WHERE username = $1",
+		// New usernames are stored lowercase (validateSignup), so match case-
+		// insensitively, preferring an exact match: older accounts may differ
+		// only by case and each must still reach its own.
+		"SELECT uuid, username, email, password, role FROM users WHERE username = $1 OR LOWER(username) = LOWER($1) ORDER BY (username = $1) DESC LIMIT 1",
 		req.Username,
 	).Scan(&user.UUID, &user.Username, &user.Email, &user.Password, &user.Role)
 	if err != nil {
