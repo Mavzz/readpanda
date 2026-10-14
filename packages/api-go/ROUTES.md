@@ -29,6 +29,7 @@ Authorization: Bearer <access_token>
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
 | GET | `/users` | Admin | List all users (admin role required; `401` without a token, `403` for non-admins). Returns `[ { username, email, isactive, login_type, uuid, created_at } ]`. |
+| DELETE | `/users/me` | Yes | Delete the caller's account for good, in one transaction. Rooms they created pass to the earliest-joined member (who becomes admin), or are deleted if nobody else is in them; their comments stay, moved to the reserved "Deleted reader" account (`deleted.reader`, id `00000000-…`; see `scripts/migrate_account_deletion.sql`), so replies survive; books they uploaded stay with no uploader. Everything else of theirs (progress, buckets, highlights, tokens, devices, notifications, memberships) is deleted. Then, if they signed in with Apple, revokes Apple's token (best effort; logged on failure). `204`, also when the account is already gone. |
 
 ---
 

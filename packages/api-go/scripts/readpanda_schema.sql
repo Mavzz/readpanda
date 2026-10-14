@@ -898,6 +898,16 @@ END $$;
 
 
 --
+-- "Deleted reader": the reserved account deleted readers' comments move to
+-- (scripts/migrate_account_deletion.sql; app spec account-deletion R5.2).
+--
+
+INSERT INTO public.users (uuid, username, email, password, isactive, role)
+VALUES ('00000000-0000-0000-0000-000000000000', 'deleted.reader', 'deleted@readpanda.invalid', NULL, false, 'user')
+ON CONFLICT (uuid) DO NOTHING;
+
+
+--
 -- PostgreSQL database dump complete
 --
 
