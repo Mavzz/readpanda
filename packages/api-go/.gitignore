@@ -25,7 +25,7 @@ env.yaml
 
 # Compiled binary
 api-go
-server
+/server
 
 # TLS certificates
 *.pem

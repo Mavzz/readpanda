@@ -114,6 +114,8 @@ func GenerateTokens(userID, role, jwtSecret, jwtRefreshSecret string) (accessTok
 		UserID: userID,
 		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        uuid.New().String(),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
 		},
 	}
@@ -127,7 +129,12 @@ func GenerateTokens(userID, role, jwtSecret, jwtRefreshSecret string) (accessTok
 	refreshClaims := JWTClaims{
 		UserID: userID,
 		Type:   "refresh",
+		// A unique ID, so two tokens issued in the same second still differ:
+		// without it a refresh right after login "rotates" to an identical
+		// token and the old one stays valid.
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        uuid.New().String(),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)),
 		},
 	}
