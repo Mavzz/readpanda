@@ -328,3 +328,64 @@ func TestRacingJoinsNotifyOnce(t *testing.T) {
 		t.Errorf("five simultaneous joins notified %d times, want 1", len(got))
 	}
 }
+
+func (a *api) setReading(as user, r room, bookID *string) int {
+	a.t.Helper()
+	return a.do("PATCH", "/room/"+r.ID+"/reading", &as, map[string]*string{"current_book_id": bookID}, nil)
+}
+
+func TestRoomPickingItsBookNotifiesMembers(t *testing.T) {
+	a := newAPI(t)
+	alice, bob, cat := a.user("alice"), a.user("bob"), a.user("cat")
+	dune, foundation := a.book("Dune"), a.book("Foundation")
+	r := a.newRoom(alice, "Club")
+	a.joinRoom(bob, r)
+	a.joinRoom(cat, r)
+
+	var detail struct {
+		ID string `json:"id"`
+	}
+	a.must(http.StatusOK, "PATCH", "/room/"+r.ID+"/reading", &alice, map[string]string{"current_book_id": dune}, &detail)
+	if detail.ID != r.ID {
+		t.Errorf("response is no longer the room detail: %+v", detail)
+	}
+
+	a.setReading(alice, r, &dune)       // the same book again
+	a.setReading(alice, r, &foundation) // a change
+	a.setReading(alice, r, nil)         // cleared
+	a.setReading(alice, r, &dune)       // picked again after clearing
+
+	want := []inboxRow{
+		{"ROOM_BOOK", "Club", "Now reading Dune", 1},
+		{"ROOM_BOOK", "Club", "Now reading Foundation", 1},
+		{"ROOM_BOOK", "Club", "Now reading Dune", 1},
+	}
+	for _, u := range []user{bob, cat} {
+		if got := a.inbox(u, "ROOM_BOOK"); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: %+v, want %+v", u.Name, got, want)
+		}
+	}
+	if got := a.inbox(alice, "ROOM_BOOK"); len(got) != 0 {
+		t.Errorf("the creator was told about their own pick: %+v", got)
+	}
+}
+
+func TestRoomBookNotChangedDoesNotNotify(t *testing.T) {
+	a := newAPI(t)
+	alice, bob := a.user("alice"), a.user("bob")
+	dune := a.book("Dune")
+	r := a.newRoom(alice, "Club")
+	a.joinRoom(bob, r)
+
+	// Only the creator can change it.
+	if code := a.setReading(bob, r, &dune); code != http.StatusForbidden {
+		t.Fatalf("member changing the book: %d, want 403", code)
+	}
+	// With Room picks a book off, nothing.
+	a.must(http.StatusOK, "PUT", settingsPath, &bob, map[string]bool{"room_book": false}, nil)
+	a.setReading(alice, r, &dune)
+
+	if got := a.inbox(bob, "ROOM_BOOK"); len(got) != 0 {
+		t.Errorf("bob: %+v", got)
+	}
+}

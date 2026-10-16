@@ -560,17 +560,63 @@ func (h *RoomHandler) SetRoomReading(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if _, err := database.DB.Exec(
-		`UPDATE rooms
+	// The book it had before comes back from the same statement (the FOR
+	// UPDATE subquery), so two quick changes each see the one before them and
+	// a repeat of the same book can be told apart from a change.
+	var previousBook sql.NullString
+	var roomName string
+	if err := database.DB.QueryRow(
+		`UPDATE rooms r
 		    SET current_book_id = $1, current_bucket_id = $2, current_bucket_type = $3, updated_at = $4
-		  WHERE id = $5`,
+		   FROM (SELECT id, current_book_id FROM rooms WHERE id = $5 FOR UPDATE) previous
+		  WHERE r.id = previous.id
+		  RETURNING previous.current_book_id, r.name`,
 		req.CurrentBookID, req.BucketID, req.BucketType, time.Now().UTC(), roomID,
-	); err != nil {
+	).Scan(&previousBook, &roomName); err != nil {
 		http.Error(w, `{"error": "Failed to update what the room is reading"}`, http.StatusInternalServerError)
 		return
 	}
+	if req.CurrentBookID != nil && *req.CurrentBookID != previousBook.String {
+		notifyRoomBook(roomID, roomName, adminID, *req.CurrentBookID)
+	}
 
 	h.GetRoomDetail(w, r)
+}
+
+// notifyRoomBook tells every member but the creator what the room is reading
+// now. Clearing the book, or picking the one it already had, doesn't come
+// here. Pushes before the request answers; failures are only logged.
+func notifyRoomBook(roomID, roomName, creatorID, bookID string) {
+	var title string
+	if err := database.DB.QueryRow(`SELECT title FROM books WHERE book_id = $1`, bookID).Scan(&title); err != nil {
+		log.Printf("SetRoomReading: not notifying %s, book %s unreadable: %v", roomID, bookID, err)
+		return
+	}
+	rows, err := database.DB.Query(
+		`SELECT user_id FROM room_members WHERE room_id = $1 AND user_id <> $2`, roomID, creatorID)
+	if err != nil {
+		log.Printf("SetRoomReading: not notifying %s, members unreadable: %v", roomID, err)
+		return
+	}
+	var members []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil {
+			members = append(members, id)
+		}
+	}
+	rows.Close()
+
+	if err := notify.Send(members, notify.Notification{
+		Type:     models.NotificationTypeRoomBook,
+		Title:    roomName,
+		Message:  "Now reading " + title,
+		BookID:   bookID,
+		RoomID:   roomID,
+		RoomName: roomName,
+	}); err != nil {
+		log.Printf("SetRoomReading: book notification for %s: %v", roomID, err)
+	}
 }
 
 // DeleteRoom — DELETE /room/{id}

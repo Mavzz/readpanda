@@ -97,6 +97,7 @@ Every route here acts on the caller, taken from the access token. The old `?user
 |---------|------------|--------------|
 | `POST /books/upload` with a manuscript | Every user except the publisher, and anyone with New books off | `NEW_BOOK`, "New book added", `book_id` set |
 | `POST /room/{id}/book/{bookId}/comments` with `parent_id` | The thread's author, if it isn't the replier, they're still a member, and Replies is on | `REPLY`, "{username} replied", the reply cut to 120 characters; `room_id`, `book_id` set |
+| `PATCH /room/{id}/reading` to a different, non-null book | Every member except the creator, if Room picks a book is on | `ROOM_BOOK`, title the room name, "Now reading {Book title}"; `room_id`, `book_id` set. Clearing the book, or sending the one it already has, notifies nobody. |
 | `POST /room/join` (a new member, not a 404 or 409) | The room's creator, if New members is on | `ROOM_JOIN`, title the room name, "{username} joined the room"; `room_id` set |
 | `POST /room/{id}/book/{bookId}/comments` | Every other member, except a reply's thread author who got `REPLY` | `ROOM_COMMENTS`, title the room name. "{username}: {text}" if the reader has reached the page (`page <= furthest_page`), otherwise "{username} commented on p. {page+1}". One unread row per reader per room: later comments update it to "{n} new comments" (no text) and it pushes at most once per `NOTIFY_ROOM_COMMENT_WINDOW`. A retried POST (same `client_id`) notifies nobody. |
 
