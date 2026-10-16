@@ -16,8 +16,15 @@ import (
 
 // pushed records what sendPush was asked to deliver.
 type pushed struct {
-	mu   sync.Mutex
-	msgs map[string]utils.PushMessage // by device token
+	mu     sync.Mutex
+	msgs   map[string]utils.PushMessage // the latest, by device token
+	counts map[string]int               // how many, by device token
+}
+
+func (p *pushed) count(token string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.counts[token]
 }
 
 func (p *pushed) get(token string) (utils.PushMessage, bool) {
@@ -31,11 +38,12 @@ func (p *pushed) get(token string) (utils.PushMessage, bool) {
 // result; nil means success.
 func fakePush(t *testing.T, respond func(ctx context.Context, token string) error) *pushed {
 	t.Helper()
-	p := &pushed{msgs: map[string]utils.PushMessage{}}
+	p := &pushed{msgs: map[string]utils.PushMessage{}, counts: map[string]int{}}
 	original := sendPush
 	sendPush = func(ctx context.Context, token string, msg utils.PushMessage) error {
 		p.mu.Lock()
 		p.msgs[token] = msg
+		p.counts[token]++
 		p.mu.Unlock()
 		if respond != nil {
 			return respond(ctx, token)

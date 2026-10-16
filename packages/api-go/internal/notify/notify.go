@@ -98,24 +98,31 @@ func typeOrSystem(t string) string {
 	return t
 }
 
+// delivery is one recipient's push: the inbox row it names (so a tapped push
+// can mark it read) and the text, which can differ per reader — a room
+// comment is locked for some and not others.
+type delivery struct {
+	notificationID int
+	title, message string
+}
+
 // insert runs one of the INSERT … RETURNING id, user_id statements above and
-// returns the new notification id per user, so a tapped push can name the
-// row it is about.
-func insert(query string, recipients interface{}, n Notification) (map[string]int, error) {
+// returns a delivery per user, all with n's text.
+func insert(query string, recipients interface{}, n Notification) (map[string]delivery, error) {
 	rows, err := database.DB.Query(query, recipients, typeOrSystem(n.Type), n.Title, n.Message,
 		nullIfEmpty(n.BookID), nullIfEmpty(n.RoomID))
 	if err != nil {
 		return nil, fmt.Errorf("storing notifications: %w", err)
 	}
 	defer rows.Close()
-	byUser := map[string]int{}
+	byUser := map[string]delivery{}
 	for rows.Next() {
 		var id int
 		var userID string
 		if err := rows.Scan(&id, &userID); err != nil {
 			return nil, fmt.Errorf("reading stored notifications: %w", err)
 		}
-		byUser[userID] = id
+		byUser[userID] = delivery{notificationID: id, title: n.Title, message: n.Message}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("reading stored notifications: %w", err)
@@ -130,9 +137,10 @@ func nullIfEmpty(s string) interface{} {
 	return s
 }
 
-// pushToDevices sends n to every device of the users in byUser and returns
-// when they've all been tried or ctx is done.
-func pushToDevices(ctx context.Context, byUser map[string]int, n Notification) {
+// pushToDevices sends each user in byUser their delivery, to every device they
+// have, and returns when they've all been tried or ctx is done. n supplies
+// the type and the ids the app opens.
+func pushToDevices(ctx context.Context, byUser map[string]delivery, n Notification) {
 	if len(byUser) == 0 {
 		return
 	}
@@ -170,7 +178,7 @@ func pushToDevices(ctx context.Context, byUser map[string]int, n Notification) {
 		}
 		data := map[string]string{
 			"type":            typ,
-			"notification_id": strconv.Itoa(byUser[d.userID]),
+			"notification_id": strconv.Itoa(byUser[d.userID].notificationID),
 		}
 		for key, value := range map[string]string{"book_id": n.BookID, "room_id": n.RoomID, "room_name": n.RoomName} {
 			if value != "" {
@@ -178,7 +186,8 @@ func pushToDevices(ctx context.Context, byUser map[string]int, n Notification) {
 			}
 		}
 
-		err := sendPush(ctx, d.token, utils.PushMessage{Title: n.Title, Body: n.Message, Data: data})
+		msg := byUser[d.userID]
+		err := sendPush(ctx, d.token, utils.PushMessage{Title: msg.title, Body: msg.message, Data: data})
 		switch {
 		case err == nil:
 			sent++
