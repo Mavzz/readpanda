@@ -242,18 +242,18 @@ func TestRoomCommentsArrivingTogetherMakeOneRowAndOnePush(t *testing.T) {
 
 func TestSnippet(t *testing.T) {
 	long := strings.Repeat("ab ", 60) // 180 characters
-	got := snippet(long)
+	got := Snippet(long)
 	if !strings.HasSuffix(got, "…") || len([]rune(got)) > snippetLength+1 {
 		t.Errorf("long comment: %q (%d runes)", got, len([]rune(got)))
 	}
-	if got := snippet("  two\n\nlines  "); got != "two lines" {
+	if got := Snippet("  two\n\nlines  "); got != "two lines" {
 		t.Errorf("whitespace: %q", got)
 	}
 	// Cut by character, not byte, so a multi-byte letter isn't split.
-	if got := snippet(strings.Repeat("é", 130)); got != strings.Repeat("é", 120)+"…" {
+	if got := Snippet(strings.Repeat("é", 130)); got != strings.Repeat("é", 120)+"…" {
 		t.Errorf("multi-byte: %q", got)
 	}
-	if got := snippet("short"); got != "short" {
+	if got := Snippet("short"); got != "short" {
 		t.Errorf("short: %q", got)
 	}
 }

@@ -37,7 +37,7 @@ type RoomCommentEvent struct {
 // comment layer uses (page <= furthest_page): the text if they've reached the
 // page, only the page number if they haven't. A bundled row never has text.
 func RoomComment(e RoomCommentEvent) error {
-	unlocked := e.AuthorName + ": " + snippet(e.Body)
+	unlocked := e.AuthorName + ": " + Snippet(e.Body)
 	// The reader shows pages 1-based.
 	locked := fmt.Sprintf("%s commented on p. %d", e.AuthorName, e.Page+1)
 	exclude := e.Exclude
@@ -116,8 +116,8 @@ func RoomComment(e RoomCommentEvent) error {
 	return nil
 }
 
-// snippet is a comment as one line, cut to snippetLength characters.
-func snippet(body string) string {
+// Snippet is a comment as one line, cut to snippetLength characters.
+func Snippet(body string) string {
 	line := strings.Join(strings.Fields(body), " ")
 	runes := []rune(line)
 	if len(runes) <= snippetLength {

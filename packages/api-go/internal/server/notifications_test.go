@@ -2,8 +2,10 @@ package server_test
 
 import (
 	"net/http"
+	"reflect"
 	"testing"
 
+	"github.com/Mavzz/readpanda/api-go/internal/database"
 	"github.com/Mavzz/readpanda/api-go/internal/notify"
 )
 
@@ -100,5 +102,157 @@ func TestNotificationSettingsForADeletedAccount(t *testing.T) {
 	// The token is still valid, but there's no account to attach settings to.
 	if code := a.do("PUT", settingsPath, &ann, map[string]bool{"replies": false}, nil); code != http.StatusNotFound {
 		t.Errorf("PUT for a deleted account: got %d, want 404", code)
+	}
+}
+
+// inboxRow is one notification as stored, for the delivery tests. Push isn't
+// configured under test, so what reaches the inbox is what was sent; the
+// pushes themselves are covered in internal/notify.
+type inboxRow struct {
+	Type, Title, Message string
+	Count                int
+}
+
+func (a *api) inbox(u user, typ string) []inboxRow {
+	a.t.Helper()
+	rows, err := database.DB.Query(
+		`SELECT type, COALESCE(title, ''), message, event_count FROM notifications
+		  WHERE user_id = $1 AND type = $2 ORDER BY id`, u.ID, typ)
+	if err != nil {
+		a.t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []inboxRow
+	for rows.Next() {
+		var r inboxRow
+		if err := rows.Scan(&r.Type, &r.Title, &r.Message, &r.Count); err != nil {
+			a.t.Fatal(err)
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+// threeReaders is "Club", created by alice, with bob and cat in it, all well
+// into "Dune".
+func threeReaders(t *testing.T) (a *api, alice, bob, cat user, r room, book string) {
+	a, alice, bob, r, book = commentsSetup(t)
+	cat = a.user("cat")
+	a.joinRoom(cat, r)
+	for _, u := range []user{alice, bob, cat} {
+		a.putProgress(u, book, 100, 300)
+	}
+	return
+}
+
+func TestCommentNotifiesTheRestOfTheRoom(t *testing.T) {
+	a, alice, bob, cat, r, book := threeReaders(t)
+
+	a.comment(bob, r, book, map[string]any{"page": 5, "body": "Paul is  growing\non me"})
+
+	want := []inboxRow{{"ROOM_COMMENTS", "Club", "bob: Paul is growing on me", 1}}
+	for _, u := range []user{alice, cat} {
+		if got := a.inbox(u, "ROOM_COMMENTS"); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: %+v, want %+v", u.Name, got, want)
+		}
+	}
+	if got := a.inbox(bob, "ROOM_COMMENTS"); len(got) != 0 {
+		t.Errorf("the commenter was notified: %+v", got)
+	}
+}
+
+func TestReplyNotifiesTheThreadStarterOnce(t *testing.T) {
+	a, alice, bob, cat, r, book := threeReaders(t)
+	root := a.comment(bob, r, book, map[string]any{"page": 5, "body": "Paul is growing on me"})
+
+	a.comment(cat, r, book, map[string]any{"page": 5, "parent_id": root.ID, "body": "Same, after the desert"})
+
+	// bob hears it as a reply, and only as a reply.
+	if got := a.inbox(bob, "REPLY"); !reflect.DeepEqual(got, []inboxRow{{"REPLY", "cat replied", "Same, after the desert", 1}}) {
+		t.Errorf("bob's replies: %+v", got)
+	}
+	if got := a.inbox(bob, "ROOM_COMMENTS"); len(got) != 0 {
+		t.Errorf("bob also got a room notification: %+v", got)
+	}
+	// alice's unread row from bob's comment now counts both.
+	if got := a.inbox(alice, "ROOM_COMMENTS"); len(got) != 1 || got[0].Message != "2 new comments" || got[0].Count != 2 {
+		t.Errorf("alice: %+v", got)
+	}
+	if got := a.inbox(cat, "REPLY"); len(got) != 0 {
+		t.Errorf("the replier got a reply notification: %+v", got)
+	}
+}
+
+func TestReplyToYourOwnCommentIsNotAReply(t *testing.T) {
+	a, alice, bob, _, r, book := threeReaders(t)
+	root := a.comment(bob, r, book, map[string]any{"page": 5, "body": "first"})
+
+	a.comment(bob, r, book, map[string]any{"page": 5, "parent_id": root.ID, "body": "and another thing"})
+
+	if got := a.inbox(bob, "REPLY"); len(got) != 0 {
+		t.Errorf("self-reply notified: %+v", got)
+	}
+	if got := a.inbox(alice, "ROOM_COMMENTS"); len(got) != 1 || got[0].Count != 2 {
+		t.Errorf("the room should still hear about it: %+v", got)
+	}
+}
+
+func TestReplyWithRepliesSwitchedOffCountsAsARoomComment(t *testing.T) {
+	a, _, bob, cat, r, book := threeReaders(t)
+	root := a.comment(bob, r, book, map[string]any{"page": 5, "body": "first"})
+	a.must(http.StatusOK, "PUT", settingsPath, &bob, map[string]bool{"replies": false}, nil)
+
+	a.comment(cat, r, book, map[string]any{"page": 5, "parent_id": root.ID, "body": "reply"})
+
+	if got := a.inbox(bob, "REPLY"); len(got) != 0 {
+		t.Errorf("reply sent with replies off: %+v", got)
+	}
+	if got := a.inbox(bob, "ROOM_COMMENTS"); len(got) != 1 || got[0].Message != "cat: reply" {
+		t.Errorf("bob should get it as a room comment instead: %+v", got)
+	}
+}
+
+func TestReplyAfterTheThreadStarterLeft(t *testing.T) {
+	a, _, bob, cat, r, book := threeReaders(t)
+	root := a.comment(bob, r, book, map[string]any{"page": 5, "body": "first"})
+	a.must(http.StatusNoContent, "DELETE", "/room/"+r.ID+"/members/me", &bob, nil, nil)
+
+	a.comment(cat, r, book, map[string]any{"page": 5, "parent_id": root.ID, "body": "reply"})
+
+	if got := a.inbox(bob, "REPLY"); len(got) != 0 {
+		t.Errorf("a reader who left got a reply notification: %+v", got)
+	}
+	if got := a.inbox(bob, "ROOM_COMMENTS"); len(got) != 0 {
+		t.Errorf("a reader who left got a room notification: %+v", got)
+	}
+}
+
+func TestReplyIsLockedAtItsRootsPage(t *testing.T) {
+	a, alice, bob, _, r, book := threeReaders(t)
+	root := a.comment(bob, r, book, map[string]any{"page": 150, "body": "the ending!"})
+	dan := a.user("dan")
+	a.joinRoom(dan, r)
+	a.putProgress(dan, book, 10, 300)
+
+	// The client says page 0; the server puts a reply on its root's page.
+	a.comment(alice, r, book, map[string]any{"page": 0, "parent_id": root.ID, "body": "no way"})
+
+	if got := a.inbox(dan, "ROOM_COMMENTS"); len(got) != 1 || got[0].Message != "alice commented on p. 151" {
+		t.Errorf("dan, 140 pages behind: %+v", got)
+	}
+}
+
+func TestRetriedCommentDoesNotNotifyAgain(t *testing.T) {
+	a, alice, bob, _, r, book := threeReaders(t)
+	body := map[string]any{"page": 5, "body": "sent twice", "client_id": "c-123"}
+
+	first := a.comment(bob, r, book, body)
+	second := a.comment(bob, r, book, body)
+
+	if first.ID != second.ID {
+		t.Fatalf("the retry stored a second comment: %s, %s", first.ID, second.ID)
+	}
+	if got := a.inbox(alice, "ROOM_COMMENTS"); len(got) != 1 || got[0].Count != 1 {
+		t.Errorf("a retried POST notified again: %+v", got)
 	}
 }
