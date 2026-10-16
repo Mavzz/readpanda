@@ -180,6 +180,21 @@ CREATE TABLE public.device_tokens (
 
 
 --
+-- Name: notification_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.notification_settings (
+    user_id uuid NOT NULL,
+    replies boolean DEFAULT true NOT NULL,
+    room_comments boolean DEFAULT true NOT NULL,
+    room_joins boolean DEFAULT true NOT NULL,
+    room_book boolean DEFAULT true NOT NULL,
+    new_books boolean DEFAULT true NOT NULL,
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
 -- Name: notifications; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -191,7 +206,11 @@ CREATE TABLE public.notifications (
     message text,
     type character varying(32) DEFAULT 'SYSTEM'::character varying NOT NULL,
     title text,
-    book_id character varying(50)
+    book_id character varying(50),
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    room_id character varying(50),
+    event_count integer DEFAULT 1 NOT NULL,
+    last_pushed_at timestamp without time zone
 );
 
 
@@ -451,6 +470,14 @@ ALTER TABLE ONLY public.device_tokens
 
 
 --
+-- Name: notification_settings notification_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.notification_settings
+    ADD CONSTRAINT notification_settings_pkey PRIMARY KEY (user_id);
+
+
+--
 -- Name: notifications notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -639,6 +666,20 @@ CREATE INDEX notifications_user_created_idx ON public.notifications USING btree 
 
 
 --
+-- Name: notifications_unread_room_comments_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX notifications_unread_room_comments_key ON public.notifications USING btree (user_id, room_id) WHERE (((type)::text = 'ROOM_COMMENTS'::text) AND (is_read IS NOT TRUE));
+
+
+--
+-- Name: notifications_user_updated_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX notifications_user_updated_idx ON public.notifications USING btree (user_id, updated_at DESC);
+
+
+--
 -- Name: reading_progress_book_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -778,11 +819,27 @@ ALTER TABLE ONLY public.device_tokens
 
 
 --
+-- Name: notification_settings notification_settings_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.notification_settings
+    ADD CONSTRAINT notification_settings_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(uuid) ON DELETE CASCADE;
+
+
+--
 -- Name: notifications notifications_book_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.notifications
     ADD CONSTRAINT notifications_book_id_fkey FOREIGN KEY (book_id) REFERENCES public.books(book_id) ON DELETE SET NULL;
+
+
+--
+-- Name: notifications notifications_room_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.notifications
+    ADD CONSTRAINT notifications_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.rooms(id) ON DELETE CASCADE;
 
 
 --
