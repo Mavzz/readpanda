@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"fmt"
 	"net/http"
 	"reflect"
 	"sync"
@@ -428,5 +429,100 @@ func TestInboxReturnsRoomFieldsAndSortsOnUpdates(t *testing.T) {
 	}
 	if inbox[1].Type != "ROOM_JOIN" || inbox[1].Count != 1 || inbox[1].RoomID == nil {
 		t.Errorf("join row: %+v", inbox[1])
+	}
+}
+
+// lastPushed is when u's unread room-comments row was last pushed (or
+// would have been: push isn't configured under test, but the row records the
+// decision either way).
+func (a *api) lastPushed(u user) time.Time {
+	a.t.Helper()
+	var at time.Time
+	if err := database.DB.QueryRow(
+		`SELECT last_pushed_at FROM notifications
+		  WHERE user_id = $1 AND type = 'ROOM_COMMENTS' AND is_read IS NOT TRUE`, u.ID).Scan(&at); err != nil {
+		a.t.Fatal(err)
+	}
+	return at
+}
+
+func TestCommentsUseTheConfiguredWindow(t *testing.T) {
+	for name, tc := range map[string]struct {
+		window      time.Duration
+		pushesTwice bool
+	}{
+		"30 minutes":   {30 * time.Minute, false},
+		"1 nanosecond": {time.Nanosecond, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := *testConfig
+			cfg.RoomCommentWindow = tc.window
+			a := newAPIWith(t, &cfg)
+			alice, bob := a.user("alice"), a.user("bob")
+			book := a.book("Dune")
+			r := a.newRoom(alice, "Club")
+			a.joinRoom(bob, r)
+
+			a.comment(bob, r, book, map[string]any{"page": 0, "body": "one"})
+			first := a.lastPushed(alice)
+			a.comment(bob, r, book, map[string]any{"page": 0, "body": "two"})
+			second := a.lastPushed(alice)
+
+			if pushed := second.After(first); pushed != tc.pushesTwice {
+				t.Errorf("second comment pushed = %v, want %v (window %s)", pushed, tc.pushesTwice, tc.window)
+			}
+		})
+	}
+}
+
+func TestReadingTheRoomRowStartsANewOne(t *testing.T) {
+	a, alice, bob, r, book := commentsSetup(t)
+	a.putProgress(alice, book, 100, 300)
+	a.comment(bob, r, book, map[string]any{"page": 5, "body": "one"})
+	a.comment(bob, r, book, map[string]any{"page": 6, "body": "two"})
+
+	var inbox []struct {
+		ID   int    `json:"id"`
+		Type string `json:"type"`
+	}
+	a.must(http.StatusOK, "GET", "/notifications", &alice, nil, &inbox)
+	for _, n := range inbox {
+		if n.Type == "ROOM_COMMENTS" {
+			a.must(http.StatusNoContent, "PUT", fmt.Sprintf("/notifications/%d/read", n.ID), &alice, nil, nil)
+		}
+	}
+	a.comment(bob, r, book, map[string]any{"page": 7, "body": "three"})
+
+	want := []inboxRow{
+		{"ROOM_COMMENTS", "Club", "2 new comments", 2},
+		{"ROOM_COMMENTS", "Club", "bob: three", 1},
+	}
+	if got := a.inbox(alice, "ROOM_COMMENTS"); !reflect.DeepEqual(got, want) {
+		t.Errorf("%+v, want %+v", got, want)
+	}
+}
+
+func TestDeletingARoomDeletesItsNotifications(t *testing.T) {
+	a, alice, bob, r, book := commentsSetup(t)
+	other := a.newRoom(alice, "Other")
+	a.joinRoom(bob, other)
+	a.comment(alice, r, book, map[string]any{"page": 0, "body": "in Club"})
+	a.comment(alice, other, book, map[string]any{"page": 0, "body": "in Other"})
+
+	a.must(http.StatusNoContent, "DELETE", "/room/"+r.ID, &alice, nil, nil)
+
+	var rooms []string
+	rows, err := database.DB.Query(`SELECT room_id FROM notifications WHERE user_id = $1 AND room_id IS NOT NULL`, bob.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		rows.Scan(&id)
+		rooms = append(rooms, id)
+	}
+	if len(rooms) != 1 || rooms[0] != other.ID {
+		t.Errorf("bob's notifications after Club was deleted are about %v, want only %s", rooms, other.ID)
 	}
 }
