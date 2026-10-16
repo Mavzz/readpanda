@@ -37,12 +37,17 @@ func (h *NotificationHandler) GetUserNotifications(w http.ResponseWriter, r *htt
 		return
 	}
 
-	// created_at is a zoneless timestamp filled with the database's local
-	// time. Casting reads it in the session zone, so the JSON carries the real
-	// instant instead of local time mislabelled as UTC.
+	// created_at and updated_at are zoneless timestamps filled with the
+	// database's local time. Casting reads them in the session zone, so the
+	// JSON carries the real instant instead of local time mislabelled as UTC.
+	// Sorted on updated_at: a bundled room-comments row moves back to the top
+	// when another comment folds into it.
 	rows, err := database.DB.Query(
-		`SELECT id, user_id, type, title, COALESCE(message, ''), book_id, COALESCE(is_read, false), created_at::timestamptz
-		 FROM notifications WHERE user_id = $1 ORDER BY created_at DESC`,
+		`SELECT id, user_id, type, title, COALESCE(message, ''), book_id, room_id, event_count,
+		        COALESCE(is_read, false), created_at::timestamptz,
+		        COALESCE(updated_at, created_at)::timestamptz
+		 FROM notifications WHERE user_id = $1
+		 ORDER BY COALESCE(updated_at, created_at) DESC, id DESC`,
 		userID,
 	)
 	if err != nil {
@@ -54,7 +59,8 @@ func (h *NotificationHandler) GetUserNotifications(w http.ResponseWriter, r *htt
 	notifications := []models.Notification{}
 	for rows.Next() {
 		var n models.Notification
-		if err := rows.Scan(&n.ID, &n.UserID, &n.Type, &n.Title, &n.Message, &n.BookID, &n.IsRead, &n.CreatedAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.UserID, &n.Type, &n.Title, &n.Message, &n.BookID, &n.RoomID, &n.Count,
+			&n.IsRead, &n.CreatedAt, &n.UpdatedAt); err != nil {
 			http.Error(w, `{"error": "Failed to load notifications"}`, http.StatusInternalServerError)
 			return
 		}

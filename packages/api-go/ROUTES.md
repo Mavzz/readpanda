@@ -79,7 +79,7 @@ Every route here acts on the caller, taken from the access token. The old `?user
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| GET | `/notifications` | Yes | The caller's notifications, newest first. Returns `[ { id, user_id, type, title, message, book_id, is_read, created_at } ]`, or `[]` when empty. `type` is `SYSTEM` or `NEW_BOOK`. For `NEW_BOOK`, `book_id` names the book to open (null if it was deleted). |
+| GET | `/notifications` | Yes | The caller's notifications, most recently updated first. Returns `[ { id, user_id, type, title, message, book_id, room_id, count, is_read, created_at, updated_at } ]`, or `[]` when empty. `type` is `SYSTEM`, `NEW_BOOK`, `REPLY`, `ROOM_COMMENTS`, `ROOM_JOIN` or `ROOM_BOOK`. `book_id` names the book to open (null if it was deleted); `room_id` the room, for the room types (the row is deleted with its room). `count` is how many comments a `ROOM_COMMENTS` row stands for, 1 otherwise; `updated_at` moves forward when another comment folds into it. |
 | GET | `/notifications/unread/count` | Yes | Returns `{ unread_count: <int> }`. |
 | PUT | `/notifications/{id}/read` | Yes | Mark one notification read. Idempotent. `204`, or `404` if it isn't the caller's. |
 | POST | `/users/me/devices` | Yes | Register an FCM token for push. Body: `{ token, platform }`, where `platform` is `ios` or `android`. Upserts on the token, so a phone that switches accounts moves to the new one. `204`. |

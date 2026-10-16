@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Mavzz/readpanda/api-go/internal/database"
 	"github.com/Mavzz/readpanda/api-go/internal/notify"
@@ -387,5 +388,45 @@ func TestRoomBookNotChangedDoesNotNotify(t *testing.T) {
 
 	if got := a.inbox(bob, "ROOM_BOOK"); len(got) != 0 {
 		t.Errorf("bob: %+v", got)
+	}
+}
+
+func TestInboxReturnsRoomFieldsAndSortsOnUpdates(t *testing.T) {
+	a, alice, bob, r, book := commentsSetup(t)
+	a.putProgress(alice, book, 100, 300)
+
+	a.comment(bob, r, book, map[string]any{"page": 5, "body": "first"}) // alice: room row
+	cat := a.user("cat")
+	a.joinRoom(cat, r)                                                   // alice: join row, newer
+	a.comment(bob, r, book, map[string]any{"page": 6, "body": "second"}) // folds into the room row
+
+	var inbox []struct {
+		Type      string    `json:"type"`
+		Message   string    `json:"message"`
+		RoomID    *string   `json:"room_id"`
+		BookID    *string   `json:"book_id"`
+		Count     int       `json:"count"`
+		IsRead    bool      `json:"is_read"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+	}
+	a.must(http.StatusOK, "GET", "/notifications", &alice, nil, &inbox)
+
+	// alice also has a join row from bob joining in commentsSetup.
+	if len(inbox) != 3 {
+		t.Fatalf("inbox: %+v", inbox)
+	}
+	top := inbox[0]
+	if top.Type != "ROOM_COMMENTS" || top.Count != 2 || top.Message != "2 new comments" {
+		t.Errorf("the updated room row should be first: %+v", inbox)
+	}
+	if top.RoomID == nil || *top.RoomID != r.ID || top.BookID == nil || *top.BookID != book {
+		t.Errorf("room row ids: room %v, book %v", top.RoomID, top.BookID)
+	}
+	if !top.UpdatedAt.After(top.CreatedAt) {
+		t.Errorf("updated_at %s should be after created_at %s", top.UpdatedAt, top.CreatedAt)
+	}
+	if inbox[1].Type != "ROOM_JOIN" || inbox[1].Count != 1 || inbox[1].RoomID == nil {
+		t.Errorf("join row: %+v", inbox[1])
 	}
 }
