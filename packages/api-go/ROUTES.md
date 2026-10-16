@@ -89,13 +89,15 @@ Every route here acts on the caller, taken from the access token. The old `?user
 
 ### Where notifications come from
 
-`internal/notify` writes the inbox row, then pushes to the recipient's registered devices in the background. The row is the record: if push is unconfigured or a send fails, the notification is still in the inbox. Tokens that FCM reports as unregistered are deleted.
+`internal/notify` writes the inbox row, then pushes to the recipient's registered devices with the default iOS sound. The row is the record: if push is unconfigured or a send fails, the notification is still in the inbox. Tokens that FCM reports as unregistered are deleted. Readers who switched a kind off (`/users/me/notification-settings`) get neither the row nor the push.
+
+`notify.Send`, for room events, pushes before the triggering request answers, giving up after 5 seconds: Cloud Run throttles CPU once a response is sent. The `NEW_BOOK` broadcast (`notify.ToAllUsersExcept`) still pushes in the background after the upload answers.
 
 | Trigger | Recipients | Notification |
 |---------|------------|--------------|
-| `POST /books/upload` with a manuscript | Every user except the publisher | `NEW_BOOK`, "New book added", `book_id` set |
+| `POST /books/upload` with a manuscript | Every user except the publisher, and anyone with New books off | `NEW_BOOK`, "New book added", `book_id` set |
 
-Push payload `data`: `{ type, notification_id, book_id? }`.
+Push payload `data`: `{ type, notification_id, book_id?, room_id?, room_name? }`.
 
 Push is enabled when `FIREBASE_PROJECT_ID` (or a service account file with a `project_id`) and credentials are set; see `.env.local.example`. Without them the server logs `Push notifications disabled` at startup and everything else still works.
 
