@@ -17,6 +17,7 @@ import (
 	"github.com/Mavzz/readpanda/api-go/internal/config"
 	"github.com/Mavzz/readpanda/api-go/internal/database"
 	"github.com/Mavzz/readpanda/api-go/internal/models"
+	"github.com/Mavzz/readpanda/api-go/internal/notify"
 	"github.com/Mavzz/readpanda/api-go/internal/utils"
 )
 
@@ -198,6 +199,29 @@ func (h *RoomHandler) GetMyRooms(w http.ResponseWriter, r *http.Request) {
 }
 
 // isRoomMember reports whether the user belongs to the room (as creator or member).
+// notifyJoin tells a room's creator that userID joined. It pushes before the
+// join answers (Cloud Run throttles CPU afterwards); a failure is only
+// logged, since the join itself has happened.
+func notifyJoin(room models.Room, userID string) {
+	if room.AdminID == userID {
+		return
+	}
+	var username string
+	if err := database.DB.QueryRow(`SELECT username FROM users WHERE uuid = $1`, userID).Scan(&username); err != nil {
+		log.Printf("JoinRoom: not notifying about %s joining %s, username unreadable: %v", userID, room.ID, err)
+		return
+	}
+	if err := notify.Send([]string{room.AdminID}, notify.Notification{
+		Type:     models.NotificationTypeRoomJoin,
+		Title:    room.Name,
+		Message:  username + " joined the room",
+		RoomID:   room.ID,
+		RoomName: room.Name,
+	}); err != nil {
+		log.Printf("JoinRoom: join notification for %s: %v", room.ID, err)
+	}
+}
+
 func isRoomMember(roomID, userID string) (bool, error) {
 	var exists bool
 	err := database.DB.QueryRow(
@@ -433,13 +457,19 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := database.DB.Exec(
+	joined, err := database.DB.Exec(
 		`INSERT INTO room_members (room_id, user_id, role, joined_at) VALUES ($1, $2, 'reader', $3)
 		 ON CONFLICT (room_id, user_id) DO NOTHING`,
 		room.ID, userID, time.Now().UTC(),
-	); err != nil {
+	)
+	if err != nil {
 		http.Error(w, `{"error": "Failed to join room"}`, http.StatusInternalServerError)
 		return
+	}
+	// Two taps on Join can race past the membership check; only the one that
+	// actually added the row tells the creator.
+	if n, _ := joined.RowsAffected(); n == 1 {
+		notifyJoin(room, userID)
 	}
 
 	// The whole Room Detail, not just the room row: a reader joining a room

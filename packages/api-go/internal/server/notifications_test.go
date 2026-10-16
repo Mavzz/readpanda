@@ -3,6 +3,7 @@ package server_test
 import (
 	"net/http"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/Mavzz/readpanda/api-go/internal/database"
@@ -254,5 +255,76 @@ func TestRetriedCommentDoesNotNotifyAgain(t *testing.T) {
 	}
 	if got := a.inbox(alice, "ROOM_COMMENTS"); len(got) != 1 || got[0].Count != 1 {
 		t.Errorf("a retried POST notified again: %+v", got)
+	}
+}
+
+func TestJoinNotifiesOnlyTheCreator(t *testing.T) {
+	a := newAPI(t)
+	alice, bob, cat := a.user("alice"), a.user("bob"), a.user("cat")
+	r := a.newRoom(alice, "Club")
+
+	a.joinRoom(bob, r)
+	a.joinRoom(cat, r)
+
+	want := []inboxRow{
+		{"ROOM_JOIN", "Club", "bob joined the room", 1},
+		{"ROOM_JOIN", "Club", "cat joined the room", 1},
+	}
+	if got := a.inbox(alice, "ROOM_JOIN"); !reflect.DeepEqual(got, want) {
+		t.Errorf("creator: %+v, want %+v", got, want)
+	}
+	for _, u := range []user{bob, cat} {
+		if got := a.inbox(u, "ROOM_JOIN"); len(got) != 0 {
+			t.Errorf("member %s was told about a join: %+v", u.Name, got)
+		}
+	}
+}
+
+func TestFailedJoinsDoNotNotify(t *testing.T) {
+	a := newAPI(t)
+	alice, bob := a.user("alice"), a.user("bob")
+	r := a.newRoom(alice, "Club")
+	a.joinRoom(bob, r)
+
+	a.must(http.StatusConflict, "POST", "/room/join", &bob, map[string]string{"invite_code": r.InviteCode}, nil)
+	a.must(http.StatusNotFound, "POST", "/room/join", &bob, map[string]string{"invite_code": "ZZZZZZ"}, nil)
+	// The creator "joining" their own room is the same 409.
+	a.must(http.StatusConflict, "POST", "/room/join", &alice, map[string]string{"invite_code": r.InviteCode}, nil)
+
+	if got := a.inbox(alice, "ROOM_JOIN"); len(got) != 1 {
+		t.Errorf("creator got %d join notifications, want only bob's first join: %+v", len(got), got)
+	}
+}
+
+func TestJoinWithNewMembersSwitchedOff(t *testing.T) {
+	a := newAPI(t)
+	alice, bob := a.user("alice"), a.user("bob")
+	r := a.newRoom(alice, "Club")
+	a.must(http.StatusOK, "PUT", settingsPath, &alice, map[string]bool{"room_joins": false}, nil)
+
+	a.joinRoom(bob, r)
+
+	if got := a.inbox(alice, "ROOM_JOIN"); len(got) != 0 {
+		t.Errorf("join notified with New members off: %+v", got)
+	}
+}
+
+func TestRacingJoinsNotifyOnce(t *testing.T) {
+	a := newAPI(t)
+	alice, bob := a.user("alice"), a.user("bob")
+	r := a.newRoom(alice, "Club")
+
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			a.do("POST", "/room/join", &bob, map[string]string{"invite_code": r.InviteCode}, nil)
+		}()
+	}
+	wg.Wait()
+
+	if got := a.inbox(alice, "ROOM_JOIN"); len(got) != 1 {
+		t.Errorf("five simultaneous joins notified %d times, want 1", len(got))
 	}
 }
