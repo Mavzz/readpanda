@@ -84,6 +84,8 @@ Every route here acts on the caller, taken from the access token. The old `?user
 | PUT | `/notifications/{id}/read` | Yes | Mark one notification read. Idempotent. `204`, or `404` if it isn't the caller's. |
 | POST | `/users/me/devices` | Yes | Register an FCM token for push. Body: `{ token, platform }`, where `platform` is `ios` or `android`. Upserts on the token, so a phone that switches accounts moves to the new one. `204`. |
 | DELETE | `/users/me/devices/{token}` | Yes | Unregister a device (URL-encode the token). Only removes the caller's own token. Idempotent. `204`. |
+| GET | `/users/me/notification-settings` | Yes | The caller's switch per kind of notification: `{ replies, room_comments, room_joins, room_book, new_books }`, all `true` until they change one. |
+| PUT | `/users/me/notification-settings` | Yes | Change any subset of the five, e.g. `{ "room_comments": false }`; the others keep their value. Returns the full set. `400` for an unknown key or a non-boolean value; `404` if the account no longer exists. A switched-off kind is neither written to the caller's inbox nor pushed to them. |
 
 ### Where notifications come from
 

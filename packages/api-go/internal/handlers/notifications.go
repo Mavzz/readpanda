@@ -11,6 +11,7 @@ import (
 	"github.com/Mavzz/readpanda/api-go/internal/config"
 	"github.com/Mavzz/readpanda/api-go/internal/database"
 	"github.com/Mavzz/readpanda/api-go/internal/models"
+	"github.com/Mavzz/readpanda/api-go/internal/notify"
 	"github.com/Mavzz/readpanda/api-go/internal/utils"
 )
 
@@ -177,4 +178,49 @@ func (h *NotificationHandler) UnregisterDevice(w http.ResponseWriter, r *http.Re
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetNotificationSettings — GET /users/me/notification-settings
+// The caller's switch per kind of notification; all true until they change one.
+func (h *NotificationHandler) GetNotificationSettings(w http.ResponseWriter, r *http.Request) {
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	if !ok {
+		return
+	}
+	settings, err := notify.LoadSettings(userID)
+	if err != nil {
+		http.Error(w, `{"error": "Failed to load notification settings"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(settings)
+}
+
+// UpdateNotificationSettings — PUT /users/me/notification-settings
+// Any subset of the switches; the rest keep their value. Returns the full set.
+func (h *NotificationHandler) UpdateNotificationSettings(w http.ResponseWriter, r *http.Request) {
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	if !ok {
+		return
+	}
+	var patch notify.SettingsPatch
+	decoder := json.NewDecoder(r.Body)
+	// A misspelt key would otherwise be a silent no-op that still answers 200.
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&patch); err != nil {
+		http.Error(w, `{"error": "Body must be an object of replies, room_comments, room_joins, room_book, new_books: true or false"}`, http.StatusBadRequest)
+		return
+	}
+	settings, err := notify.UpdateSettings(userID, patch)
+	if isForeignKeyViolation(err) {
+		// A valid token for an account that has since been deleted.
+		http.Error(w, `{"error": "Account not found"}`, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, `{"error": "Failed to save notification settings"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(settings)
 }
