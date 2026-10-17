@@ -3,6 +3,8 @@ package notify
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -238,5 +240,78 @@ func TestBroadcastSkipsReadersWithNewBooksOff(t *testing.T) {
 		if got := inboxCount(t, db, want.id, "NEW_BOOK"); got != want.rows {
 			t.Errorf("%s: %d NEW_BOOK rows, want %d", name, got, want.rows)
 		}
+	}
+}
+
+// One reader, many devices, each slow to answer: sent one after another the
+// budget runs out part-way (QA found 8 of 25 reached); sent side by side,
+// every device gets it well inside the timeout.
+func TestSendReachesEveryDeviceOfAManyDeviceReader(t *testing.T) {
+	db := testdb.Require(t)
+	original := pushTimeout
+	pushTimeout = 2 * time.Second
+	t.Cleanup(func() { pushTimeout = original })
+	p := fakePush(t, func(ctx context.Context, _ string) error {
+		select {
+		case <-time.After(300 * time.Millisecond):
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	id, _ := reader(t, db, "many")
+	var tokens []string
+	for i := 0; i < 25; i++ {
+		tok := fmt.Sprintf("tok-many-%02d", i)
+		tokens = append(tokens, tok)
+		if _, err := db.Exec(`INSERT INTO device_tokens (token, user_id, platform) VALUES ($1, $2, 'ios')`, tok, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	start := time.Now()
+	if err := Send([]string{id}, Notification{Type: models.NotificationTypeRoomJoin, Title: "r", Message: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	elapsed := time.Since(start)
+
+	missed := 0
+	for _, tok := range tokens {
+		if p.count(tok) != 1 {
+			missed++
+		}
+	}
+	if missed > 0 {
+		t.Errorf("%d of %d devices missed the push (took %s)", missed, len(tokens), elapsed)
+	}
+	if elapsed > time.Second {
+		t.Errorf("25 devices at 300ms each took %s; side by side it should be about 1s", elapsed)
+	}
+}
+
+// A device whose sends fail (APNs rejecting the credential, say) doesn't stop
+// the reader's other devices getting the push.
+func TestAFailingDeviceDoesNotBlockTheOthers(t *testing.T) {
+	db := testdb.Require(t)
+	p := fakePush(t, func(_ context.Context, token string) error {
+		if token == "tok-bad" {
+			return errors.New("googleapi: Error 401: Invalid APNs credential")
+		}
+		return nil
+	})
+	id, good := reader(t, db, "mixed")
+	if _, err := db.Exec(`INSERT INTO device_tokens (token, user_id, platform) VALUES ('tok-bad', $1, 'ios')`, id); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Send([]string{id}, Notification{Type: models.NotificationTypeRoomJoin, Title: "r", Message: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if p.count(good) != 1 {
+		t.Error("the working device missed the push")
+	}
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM device_tokens WHERE token = 'tok-bad'`).Scan(&n); err != nil || n != 1 {
+		t.Errorf("a rejected-credential token isn't stale and must be kept (count %d, %v)", n, err)
 	}
 }

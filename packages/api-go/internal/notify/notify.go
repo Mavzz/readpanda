@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/lib/pq"
@@ -40,6 +41,10 @@ const broadcastTimeout = 2 * time.Minute
 // keeps a slow FCM from holding that request up for long. A var so tests can
 // shorten it.
 var pushTimeout = 5 * time.Second
+
+// pushWorkers is how many sends to one notification's devices are in flight
+// at once.
+const pushWorkers = 10
 
 // sendPush is utils.SendPush, swapped out in tests.
 var sendPush = utils.SendPush
@@ -170,12 +175,12 @@ func pushToDevices(ctx context.Context, byUser map[string]delivery, n Notificati
 	rows.Close()
 
 	typ := typeOrSystem(n.Type)
-	sent, stale := 0, 0
-	for _, d := range devices {
-		if ctx.Err() != nil {
-			log.Printf("notify: %s — gave up after %d of %d devices: %v", typ, sent, len(devices), ctx.Err())
-			return
-		}
+	var (
+		mu                  sync.Mutex
+		sent, stale, failed int
+		disabled            bool
+	)
+	send := func(d device) {
 		data := map[string]string{
 			"type":            typ,
 			"notification_id": strconv.Itoa(byUser[d.userID].notificationID),
@@ -190,18 +195,66 @@ func pushToDevices(ctx context.Context, byUser map[string]delivery, n Notificati
 		err := sendPush(ctx, d.token, utils.PushMessage{Title: msg.title, Body: msg.message, Data: data})
 		switch {
 		case err == nil:
+			mu.Lock()
 			sent++
+			mu.Unlock()
 		case errors.Is(err, utils.ErrPushDisabled):
 			// Inbox rows are written; there's just no FCM to deliver through.
-			return
+			mu.Lock()
+			disabled = true
+			mu.Unlock()
 		case errors.Is(err, utils.ErrStaleToken):
+			mu.Lock()
 			stale++
+			mu.Unlock()
 			if _, err := database.DB.Exec(`DELETE FROM device_tokens WHERE token = $1`, d.token); err != nil {
 				log.Printf("notify: removing stale device token: %v", err)
 			}
 		default:
+			mu.Lock()
+			failed++
+			mu.Unlock()
 			log.Printf("notify: push to %s failed: %v", d.userID, err)
 		}
+	}
+
+	// Side by side, a few at a time: one after another, a reader with many
+	// devices (old installs, tokens APNs rejects) used up the whole timeout
+	// before reaching the phone they were holding.
+	jobs := make(chan device)
+	var wg sync.WaitGroup
+	for i := 0; i < pushWorkers && i < len(devices); i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for d := range jobs {
+				send(d)
+			}
+		}()
+	}
+feed:
+	for _, d := range devices {
+		mu.Lock()
+		stop := disabled
+		mu.Unlock()
+		if stop {
+			break
+		}
+		select {
+		case jobs <- d:
+		case <-ctx.Done():
+			break feed
+		}
+	}
+	close(jobs)
+	wg.Wait()
+
+	if disabled {
+		return
+	}
+	if ctx.Err() != nil && sent+stale+failed < len(devices) {
+		log.Printf("notify: %s — gave up after %d of %d devices: %v", typ, sent+stale+failed, len(devices), ctx.Err())
+		return
 	}
 	log.Printf("notify: %s — %d pushed, %d stale tokens removed, %d devices", typ, sent, stale, len(devices))
 }
