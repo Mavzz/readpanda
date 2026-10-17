@@ -110,6 +110,23 @@ CREATE TABLE public.book_highlights (
 
 
 --
+-- Name: book_provenance; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.book_provenance (
+    book_id character varying(50) NOT NULL,
+    source character varying(32) NOT NULL,
+    source_id character varying(64) NOT NULL,
+    source_url text NOT NULL,
+    downloaded_from text,
+    rights text NOT NULL,
+    contributors jsonb NOT NULL,
+    rule text NOT NULL,
+    checked_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
 -- Name: books; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -416,6 +433,22 @@ ALTER TABLE ONLY public.book_comments
 
 ALTER TABLE ONLY public.book_highlights
     ADD CONSTRAINT book_highlights_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: book_provenance book_provenance_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.book_provenance
+    ADD CONSTRAINT book_provenance_pkey PRIMARY KEY (book_id);
+
+
+--
+-- Name: book_provenance book_provenance_source_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.book_provenance
+    ADD CONSTRAINT book_provenance_source_key UNIQUE (source, source_id);
 
 
 --
@@ -743,6 +776,14 @@ ALTER TABLE ONLY public.book_comments
 
 ALTER TABLE ONLY public.book_highlights
     ADD CONSTRAINT book_highlights_book_id_fkey FOREIGN KEY (book_id) REFERENCES public.books(book_id) ON DELETE CASCADE;
+
+
+--
+-- Name: book_provenance book_provenance_book_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.book_provenance
+    ADD CONSTRAINT book_provenance_book_id_fkey FOREIGN KEY (book_id) REFERENCES public.books(book_id) ON DELETE CASCADE;
 
 
 --
