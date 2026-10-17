@@ -33,8 +33,14 @@ type api struct {
 
 func newAPI(t *testing.T) *api {
 	t.Helper()
+	return newAPIWith(t, testConfig)
+}
+
+// newAPIWith is newAPI with a different config, for tests about a setting.
+func newAPIWith(t *testing.T, cfg *config.Config) *api {
+	t.Helper()
 	testdb.Require(t)
-	return &api{t: t, router: server.NewRouter(testConfig)}
+	return &api{t: t, router: server.NewRouter(cfg)}
 }
 
 type user struct {

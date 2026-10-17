@@ -84,6 +84,8 @@ func NewRouter(cfg *config.Config) http.Handler {
 	// Push device registration — one row per FCM token, owned by the caller.
 	router.HandleFunc(apiPrefix+"/users/me/devices", notificationHandler.RegisterDevice).Methods("POST", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/users/me/devices/{token}", notificationHandler.UnregisterDevice).Methods("DELETE", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/users/me/notification-settings", notificationHandler.GetNotificationSettings).Methods("GET", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/users/me/notification-settings", notificationHandler.UpdateNotificationSettings).Methods("PUT", "OPTIONS")
 
 	// User Buckets routes
 	router.HandleFunc(apiPrefix+"/users/me/buckets", bucketHandler.ListUserBuckets).Methods("GET")

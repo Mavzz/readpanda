@@ -137,7 +137,15 @@ R2_ACCESS_KEY_ID: "..."
 R2_SECRET_ACCESS_KEY: "..."
 R2_BUCKET_NAME: "readpanda"
 R2_PUBLIC_URL: "https://pub-<id>.r2.dev"
+
+# Optional. How often a reader's room-comments notification can push; comments
+# in between only update their inbox row. Defaults to "30m".
+# NOTIFY_ROOM_COMMENT_WINDOW: "30m"
 ```
+
+To change the window without a code change (Cloud Run starts a new revision with the same image):
+`gcloud run services update readpanda-backend --region asia-south1 --update-env-vars NOTIFY_ROOM_COMMENT_WINDOW=45m`.
+An invalid value is logged at startup and the 30-minute default used.
 
 Changing `JWT_SECRET` or `JWT_REFRESH_SECRET` signs every user out. Nothing
 else happens, so rotate them if they might have leaked.

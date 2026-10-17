@@ -17,6 +17,7 @@ import (
 	"github.com/Mavzz/readpanda/api-go/internal/config"
 	"github.com/Mavzz/readpanda/api-go/internal/database"
 	"github.com/Mavzz/readpanda/api-go/internal/models"
+	"github.com/Mavzz/readpanda/api-go/internal/notify"
 	"github.com/Mavzz/readpanda/api-go/internal/utils"
 )
 
@@ -198,6 +199,29 @@ func (h *RoomHandler) GetMyRooms(w http.ResponseWriter, r *http.Request) {
 }
 
 // isRoomMember reports whether the user belongs to the room (as creator or member).
+// notifyJoin tells a room's creator that userID joined. It pushes before the
+// join answers (Cloud Run throttles CPU afterwards); a failure is only
+// logged, since the join itself has happened.
+func notifyJoin(room models.Room, userID string) {
+	if room.AdminID == userID {
+		return
+	}
+	var username string
+	if err := database.DB.QueryRow(`SELECT username FROM users WHERE uuid = $1`, userID).Scan(&username); err != nil {
+		log.Printf("JoinRoom: not notifying about %s joining %s, username unreadable: %v", userID, room.ID, err)
+		return
+	}
+	if err := notify.Send([]string{room.AdminID}, notify.Notification{
+		Type:     models.NotificationTypeRoomJoin,
+		Title:    room.Name,
+		Message:  username + " joined the room",
+		RoomID:   room.ID,
+		RoomName: room.Name,
+	}); err != nil {
+		log.Printf("JoinRoom: join notification for %s: %v", room.ID, err)
+	}
+}
+
 func isRoomMember(roomID, userID string) (bool, error) {
 	var exists bool
 	err := database.DB.QueryRow(
@@ -433,13 +457,19 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := database.DB.Exec(
+	joined, err := database.DB.Exec(
 		`INSERT INTO room_members (room_id, user_id, role, joined_at) VALUES ($1, $2, 'reader', $3)
 		 ON CONFLICT (room_id, user_id) DO NOTHING`,
 		room.ID, userID, time.Now().UTC(),
-	); err != nil {
+	)
+	if err != nil {
 		http.Error(w, `{"error": "Failed to join room"}`, http.StatusInternalServerError)
 		return
+	}
+	// Two taps on Join can race past the membership check; only the one that
+	// actually added the row tells the creator.
+	if n, _ := joined.RowsAffected(); n == 1 {
+		notifyJoin(room, userID)
 	}
 
 	// The whole Room Detail, not just the room row: a reader joining a room
@@ -530,17 +560,63 @@ func (h *RoomHandler) SetRoomReading(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if _, err := database.DB.Exec(
-		`UPDATE rooms
+	// The book it had before comes back from the same statement (the FOR
+	// UPDATE subquery), so two quick changes each see the one before them and
+	// a repeat of the same book can be told apart from a change.
+	var previousBook sql.NullString
+	var roomName string
+	if err := database.DB.QueryRow(
+		`UPDATE rooms r
 		    SET current_book_id = $1, current_bucket_id = $2, current_bucket_type = $3, updated_at = $4
-		  WHERE id = $5`,
+		   FROM (SELECT id, current_book_id FROM rooms WHERE id = $5 FOR UPDATE) previous
+		  WHERE r.id = previous.id
+		  RETURNING previous.current_book_id, r.name`,
 		req.CurrentBookID, req.BucketID, req.BucketType, time.Now().UTC(), roomID,
-	); err != nil {
+	).Scan(&previousBook, &roomName); err != nil {
 		http.Error(w, `{"error": "Failed to update what the room is reading"}`, http.StatusInternalServerError)
 		return
 	}
+	if req.CurrentBookID != nil && *req.CurrentBookID != previousBook.String {
+		notifyRoomBook(roomID, roomName, adminID, *req.CurrentBookID)
+	}
 
 	h.GetRoomDetail(w, r)
+}
+
+// notifyRoomBook tells every member but the creator what the room is reading
+// now. Clearing the book, or picking the one it already had, doesn't come
+// here. Pushes before the request answers; failures are only logged.
+func notifyRoomBook(roomID, roomName, creatorID, bookID string) {
+	var title string
+	if err := database.DB.QueryRow(`SELECT title FROM books WHERE book_id = $1`, bookID).Scan(&title); err != nil {
+		log.Printf("SetRoomReading: not notifying %s, book %s unreadable: %v", roomID, bookID, err)
+		return
+	}
+	rows, err := database.DB.Query(
+		`SELECT user_id FROM room_members WHERE room_id = $1 AND user_id <> $2`, roomID, creatorID)
+	if err != nil {
+		log.Printf("SetRoomReading: not notifying %s, members unreadable: %v", roomID, err)
+		return
+	}
+	var members []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil {
+			members = append(members, id)
+		}
+	}
+	rows.Close()
+
+	if err := notify.Send(members, notify.Notification{
+		Type:     models.NotificationTypeRoomBook,
+		Title:    roomName,
+		Message:  "Now reading " + title,
+		BookID:   bookID,
+		RoomID:   roomID,
+		RoomName: roomName,
+	}); err != nil {
+		log.Printf("SetRoomReading: book notification for %s: %v", roomID, err)
+	}
 }
 
 // DeleteRoom — DELETE /room/{id}
