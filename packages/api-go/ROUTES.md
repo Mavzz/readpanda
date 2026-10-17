@@ -79,21 +79,29 @@ Every route here acts on the caller, taken from the access token. The old `?user
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| GET | `/notifications` | Yes | The caller's notifications, newest first. Returns `[ { id, user_id, type, title, message, book_id, is_read, created_at } ]`, or `[]` when empty. `type` is `SYSTEM` or `NEW_BOOK`. For `NEW_BOOK`, `book_id` names the book to open (null if it was deleted). |
+| GET | `/notifications` | Yes | The caller's notifications, most recently updated first. Returns `[ { id, user_id, type, title, message, book_id, room_id, count, is_read, created_at, updated_at } ]`, or `[]` when empty. `type` is `SYSTEM`, `NEW_BOOK`, `REPLY`, `ROOM_COMMENTS`, `ROOM_JOIN` or `ROOM_BOOK`. `book_id` names the book to open (null if it was deleted); `room_id` the room, for the room types (the row is deleted with its room). `count` is how many comments a `ROOM_COMMENTS` row stands for, 1 otherwise; `updated_at` moves forward when another comment folds into it. |
 | GET | `/notifications/unread/count` | Yes | Returns `{ unread_count: <int> }`. |
 | PUT | `/notifications/{id}/read` | Yes | Mark one notification read. Idempotent. `204`, or `404` if it isn't the caller's. |
 | POST | `/users/me/devices` | Yes | Register an FCM token for push. Body: `{ token, platform }`, where `platform` is `ios` or `android`. Upserts on the token, so a phone that switches accounts moves to the new one. `204`. |
 | DELETE | `/users/me/devices/{token}` | Yes | Unregister a device (URL-encode the token). Only removes the caller's own token. Idempotent. `204`. |
+| GET | `/users/me/notification-settings` | Yes | The caller's switch per kind of notification: `{ replies, room_comments, room_joins, room_book, new_books }`, all `true` until they change one. |
+| PUT | `/users/me/notification-settings` | Yes | Change any subset of the five, e.g. `{ "room_comments": false }`; the others keep their value. Returns the full set. `400` for an unknown key or a non-boolean value; `404` if the account no longer exists. A switched-off kind is neither written to the caller's inbox nor pushed to them. |
 
 ### Where notifications come from
 
-`internal/notify` writes the inbox row, then pushes to the recipient's registered devices in the background. The row is the record: if push is unconfigured or a send fails, the notification is still in the inbox. Tokens that FCM reports as unregistered are deleted.
+`internal/notify` writes the inbox row, then pushes to the recipient's registered devices with the default iOS sound. The row is the record: if push is unconfigured or a send fails, the notification is still in the inbox. Tokens that FCM reports as unregistered are deleted. Readers who switched a kind off (`/users/me/notification-settings`) get neither the row nor the push.
+
+`notify.Send`, for room events, pushes before the triggering request answers, giving up after 5 seconds: Cloud Run throttles CPU once a response is sent. The `NEW_BOOK` broadcast (`notify.ToAllUsersExcept`) still pushes in the background after the upload answers.
 
 | Trigger | Recipients | Notification |
 |---------|------------|--------------|
-| `POST /books/upload` with a manuscript | Every user except the publisher | `NEW_BOOK`, "New book added", `book_id` set |
+| `POST /books/upload` with a manuscript | Every user except the publisher, and anyone with New books off | `NEW_BOOK`, "New book added", `book_id` set |
+| `POST /room/{id}/book/{bookId}/comments` with `parent_id` | The thread's author, if it isn't the replier, they're still a member, and Replies is on | `REPLY`, "{username} replied", the reply cut to 120 characters; `room_id`, `book_id` set |
+| `PATCH /room/{id}/reading` to a different, non-null book | Every member except the creator, if Room picks a book is on | `ROOM_BOOK`, title the room name, "Now reading {Book title}"; `room_id`, `book_id` set. Clearing the book, or sending the one it already has, notifies nobody. |
+| `POST /room/join` (a new member, not a 404 or 409) | The room's creator, if New members is on | `ROOM_JOIN`, title the room name, "{username} joined the room"; `room_id` set |
+| `POST /room/{id}/book/{bookId}/comments` | Every other member, except a reply's thread author who got `REPLY` | `ROOM_COMMENTS`, title the room name. "{username}: {text}" if the reader has reached the page (`page <= furthest_page`), otherwise "{username} commented on p. {page+1}". One unread row per reader per room: later comments update it to "{n} new comments" (no text) and it pushes at most once per `NOTIFY_ROOM_COMMENT_WINDOW`. A retried POST (same `client_id`) notifies nobody. |
 
-Push payload `data`: `{ type, notification_id, book_id? }`.
+Push payload `data`: `{ type, notification_id, book_id?, room_id?, room_name? }`.
 
 Push is enabled when `FIREBASE_PROJECT_ID` (or a service account file with a `project_id`) and credentials are set; see `.env.local.example`. Without them the server logs `Push notifications disabled` at startup and everything else still works.
 

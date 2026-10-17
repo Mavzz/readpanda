@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,6 +19,7 @@ import (
 	"github.com/Mavzz/readpanda/api-go/internal/config"
 	"github.com/Mavzz/readpanda/api-go/internal/database"
 	"github.com/Mavzz/readpanda/api-go/internal/models"
+	"github.com/Mavzz/readpanda/api-go/internal/notify"
 	"github.com/Mavzz/readpanda/api-go/internal/utils"
 )
 
@@ -302,6 +304,8 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	fileHash := req.FileHash
 	var parentID interface{}
 
+	// Whoever started the thread being replied to, for the reply notification.
+	var parentAuthor string
 	if req.ParentID != "" {
 		var parentOfParent sql.NullString
 		var rootRoom string
@@ -309,10 +313,10 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		var rootAnchor sql.NullString
 		var rootHash sql.NullString
 		err := database.DB.QueryRow(
-			`SELECT parent_id, room_id, page, anchor_text, anchor_bounds, file_hash
+			`SELECT parent_id, room_id, page, anchor_text, anchor_bounds, file_hash, user_id
 			   FROM book_comments WHERE id = $1 AND book_id = $2`,
 			req.ParentID, bookID,
-		).Scan(&parentOfParent, &rootRoom, &page, &rootAnchor, &rootBounds, &rootHash)
+		).Scan(&parentOfParent, &rootRoom, &page, &rootAnchor, &rootBounds, &rootHash, &parentAuthor)
 		if err == sql.ErrNoRows {
 			http.Error(w, `{"error": "Comment not found"}`, http.StatusNotFound)
 			return
@@ -418,9 +422,81 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		log.Printf("comments: failed to read username for %s: %v", userID, err)
 	}
 
+	// A retried POST gets back the row the first attempt wrote, which has
+	// already notified everyone.
+	if stored.ID == commentID {
+		h.notifyComment(roomID, bookID, userID, stored, parentAuthor)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(stored)
+}
+
+// notifyComment tells the room about a new comment: the author of the thread
+// a reply belongs to gets a reply notification, everyone else the room's
+// comment notification. Both push before the request answers (Cloud Run
+// throttles CPU afterwards), side by side so the wait is one push timeout,
+// not two. Failures are logged; the comment is saved either way.
+func (h *CommentHandler) notifyComment(roomID, bookID, authorID string, c models.BookComment, parentAuthor string) {
+	var roomName string
+	if err := database.DB.QueryRow(`SELECT name FROM rooms WHERE id = $1`, roomID).Scan(&roomName); err != nil {
+		log.Printf("comments: not notifying about %s, room %s unreadable: %v", c.ID, roomID, err)
+		return
+	}
+	authorName := c.Username
+	if authorName == "" {
+		authorName = "Someone"
+	}
+
+	var exclude []string
+	var wg sync.WaitGroup
+	if parentAuthor != "" && parentAuthor != authorID && wantsReplies(roomID, parentAuthor) {
+		// They hear about this one as a reply, so it isn't also counted in
+		// their room notification. With replies switched off they stay in the
+		// room notification instead.
+		exclude = append(exclude, parentAuthor)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := notify.Send([]string{parentAuthor}, notify.Notification{
+				Type:     models.NotificationTypeReply,
+				Title:    authorName + " replied",
+				Message:  notify.Snippet(c.Body),
+				BookID:   bookID,
+				RoomID:   roomID,
+				RoomName: roomName,
+			}); err != nil {
+				log.Printf("comments: reply notification for %s: %v", c.ID, err)
+			}
+		}()
+	}
+
+	if err := notify.RoomComment(notify.RoomCommentEvent{
+		RoomID:     roomID,
+		RoomName:   roomName,
+		BookID:     bookID,
+		AuthorID:   authorID,
+		AuthorName: authorName,
+		Page:       c.Page,
+		Body:       c.Body,
+		Exclude:    exclude,
+		Window:     h.Config.RoomCommentWindow,
+	}); err != nil {
+		log.Printf("comments: room notification for %s: %v", c.ID, err)
+	}
+	wg.Wait()
+}
+
+// wantsReplies is whether userID should get a reply notification in roomID:
+// still a member (a reply can land after they've left) and with replies on.
+func wantsReplies(roomID, userID string) bool {
+	member, err := isRoomMember(roomID, userID)
+	if err != nil || !member {
+		return false
+	}
+	settings, err := notify.LoadSettings(userID)
+	return err == nil && settings.Replies
 }
 
 // MarkRead — POST /room/{id}/book/{bookId}/comments/read  {"comment_ids": [...]}

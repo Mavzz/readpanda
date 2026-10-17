@@ -53,22 +53,33 @@ type RefreshToken struct {
 }
 
 // Notification represents a user notification. Type tells the app what to do
-// with it — NEW_BOOK opens the reader on BookID; SYSTEM is plain text.
+// with it — NEW_BOOK opens the reader on BookID, the room types open RoomID
+// (or its book); SYSTEM is plain text.
 type Notification struct {
-	ID        int       `json:"id"`
-	UserID    string    `json:"user_id"`
-	Type      string    `json:"type"`
-	Title     *string   `json:"title"`
-	Message   string    `json:"message"`
-	BookID    *string   `json:"book_id"`
+	ID      int     `json:"id"`
+	UserID  string  `json:"user_id"`
+	Type    string  `json:"type"`
+	Title   *string `json:"title"`
+	Message string  `json:"message"`
+	BookID  *string `json:"book_id"`
+	RoomID  *string `json:"room_id"`
+	// How many comments a ROOM_COMMENTS row stands for; 1 for everything else.
+	Count     int       `json:"count"`
 	IsRead    bool      `json:"is_read"`
 	CreatedAt time.Time `json:"created_at"`
+	// A bundled ROOM_COMMENTS row changes after it's written; the inbox sorts
+	// on this so it comes back to the top.
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Notification types the mobile app understands.
 const (
-	NotificationTypeSystem  = "SYSTEM"
-	NotificationTypeNewBook = "NEW_BOOK"
+	NotificationTypeSystem       = "SYSTEM"
+	NotificationTypeNewBook      = "NEW_BOOK"
+	NotificationTypeReply        = "REPLY"
+	NotificationTypeRoomComments = "ROOM_COMMENTS"
+	NotificationTypeRoomJoin     = "ROOM_JOIN"
+	NotificationTypeRoomBook     = "ROOM_BOOK"
 )
 
 // Preference represents a genre/subgenre preference
