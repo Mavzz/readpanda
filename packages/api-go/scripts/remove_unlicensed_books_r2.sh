@@ -14,7 +14,21 @@
 
 set -euo pipefail
 
-source .env.local
+# Only the R2 settings: .env.local is read by godotenv, not a shell, and
+# other values in it (the Apple key) don't survive `source`.
+env_value() {
+  grep -E "^$1=" .env.local | tail -1 | cut -d= -f2- | sed -E 's/^["'\'']//; s/["'\'']$//'
+}
+R2_ENDPOINT=$(env_value R2_ENDPOINT)
+R2_ACCESS_KEY_ID=$(env_value R2_ACCESS_KEY_ID)
+R2_SECRET_ACCESS_KEY=$(env_value R2_SECRET_ACCESS_KEY)
+R2_BUCKET_NAME=$(env_value R2_BUCKET_NAME)
+for v in R2_ENDPOINT R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET_NAME; do
+  if [ -z "${!v}" ]; then
+    echo "$v is missing from .env.local" >&2
+    exit 1
+  fi
+done
 
 export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
 export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
