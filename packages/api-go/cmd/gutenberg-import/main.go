@@ -357,7 +357,8 @@ func importBook(ctx context.Context, o options, r *row) string {
 	if err := o.renderer.PDF(ctx, cleanHTML, pdfPath); err != nil {
 		return "failed to print: " + err.Error()
 	}
-	if err := o.renderer.Cover(ctx, b, coverPath); err != nil {
+	// Keyed by the Gutenberg number, as before, so a re-run draws the same colour.
+	if err := o.renderer.Cover(ctx, gutenberg.DisplayTitle(b.Title), gutenberg.AuthorLine(b), strconv.Itoa(b.ID), coverPath); err != nil {
 		return "failed to draw the cover: " + err.Error()
 	}
 	pdf, err := os.ReadFile(pdfPath)

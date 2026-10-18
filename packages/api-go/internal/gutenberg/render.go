@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"time"
 )
 
@@ -55,17 +54,18 @@ func (r Renderer) PDF(ctx context.Context, htmlPath, outPath string) error {
 	)
 }
 
-// Cover draws our own cover for b to outPath as a 1000×1500 PNG. Gutenberg's
-// cover images are sometimes a scan of a modern edition's cover, which isn't
-// free to use, so every imported book gets this instead.
-func (r Renderer) Cover(ctx context.Context, b Book, outPath string) error {
+// Cover draws our own cover to outPath as a 1000×1500 PNG: the title, the
+// author, and a colour picked by key, so a book always gets the same one.
+// Gutenberg's cover images are sometimes a scan of a modern edition's cover,
+// which isn't free to use, so every imported book gets this instead.
+func (r Renderer) Cover(ctx context.Context, title, author, key, outPath string) error {
 	dir, err := os.MkdirTemp("", "cover-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
 	page := filepath.Join(dir, "cover.html")
-	if err := os.WriteFile(page, []byte(CoverHTML(b)), 0o600); err != nil {
+	if err := os.WriteFile(page, []byte(CoverHTML(title, author, key)), 0o600); err != nil {
 		return err
 	}
 	return r.run(ctx, page, outPath,
@@ -76,17 +76,15 @@ func (r Renderer) Cover(ctx context.Context, b Book, outPath string) error {
 	)
 }
 
-// Cover colours: deep, quiet tones that keep white type readable. A book
-// always gets the same one.
+// Cover colours: deep, quiet tones that keep white type readable.
 var coverColors = []string{"#23395B", "#3E5641", "#6B2737", "#2F4858", "#5B3758", "#3D405B", "#7A4419", "#264653"}
 
 // CoverHTML is the page Cover screenshots.
-func CoverHTML(b Book) string {
+func CoverHTML(title, author, key string) string {
 	h := fnv.New32a()
-	h.Write([]byte(strconv.Itoa(b.ID)))
+	h.Write([]byte(key))
 	bg := coverColors[h.Sum32()%uint32(len(coverColors))]
 
-	title := DisplayTitle(b.Title)
 	size := 96
 	switch n := len([]rune(title)); {
 	case n > 90:
@@ -104,7 +102,7 @@ body { background: %s; color: #FAF7F0; font-family: Georgia, "Times New Roman", 
 h1 { font-size: %dpx; line-height: 1.12; font-weight: normal; margin: 0; }
 p { font-size: 46px; margin: 0; letter-spacing: .02em; opacity: .9; }
 </style></head><body><div><div class="rule"></div><h1>%s</h1></div><p>%s</p></body></html>`,
-		bg, size, html.EscapeString(title), html.EscapeString(AuthorLine(b)))
+		bg, size, html.EscapeString(title), html.EscapeString(author))
 }
 
 // run loads page in a fresh headless Chrome with the network unreachable: the
