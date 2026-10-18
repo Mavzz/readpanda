@@ -87,6 +87,8 @@ type PushMessage struct {
 	Data  map[string]string
 }
 
+var defaultSoundPayload = googleapi.RawMessage(`{"aps":{"sound":"default"}}`)
+
 // SendPush delivers msg to a single device token. It returns ErrStaleToken
 // when FCM says the token is dead, so the caller can delete it.
 func SendPush(ctx context.Context, token string, msg PushMessage) error {
@@ -102,6 +104,8 @@ func SendPush(ctx context.Context, token string, msg PushMessage) error {
 				Body:  msg.Body,
 			},
 			Data: msg.Data,
+			// Without an aps sound iOS shows the banner silently.
+			Apns: &fcm.ApnsConfig{Payload: defaultSoundPayload},
 		},
 	}
 

@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -60,6 +61,10 @@ type Config struct {
 	R2SecretAccessKey string
 	R2BucketName      string
 	R2PublicURL       string
+
+	// Notifications. A reader's unread room-comments row is pushed at most
+	// once per window; comments inside it only update the row.
+	RoomCommentWindow time.Duration
 }
 
 // Load reads configuration from environment variables
@@ -131,7 +136,25 @@ func Load() *Config {
 		R2SecretAccessKey: getEnv("R2_SECRET_ACCESS_KEY", ""),
 		R2BucketName:      getEnv("R2_BUCKET_NAME", ""),
 		R2PublicURL:       getEnv("R2_PUBLIC_URL", ""),
+
+		RoomCommentWindow: getDurationEnv("NOTIFY_ROOM_COMMENT_WINDOW", 30*time.Minute),
 	}
+}
+
+// getDurationEnv reads a Go duration ("30m", "1h"). A value that doesn't parse,
+// or isn't positive, is logged and the default used: a typo in env.yaml
+// shouldn't stop the server from starting.
+func getDurationEnv(key string, defaultValue time.Duration) time.Duration {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return defaultValue
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Printf("%s=%q isn't a positive duration like \"30m\"; using %s", key, raw, defaultValue)
+		return defaultValue
+	}
+	return d
 }
 
 func getEnv(key, defaultValue string) string {

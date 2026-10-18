@@ -110,6 +110,23 @@ CREATE TABLE public.book_highlights (
 
 
 --
+-- Name: book_provenance; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.book_provenance (
+    book_id character varying(50) NOT NULL,
+    source character varying(32) NOT NULL,
+    source_id character varying(64) NOT NULL,
+    source_url text NOT NULL,
+    downloaded_from text,
+    rights text NOT NULL,
+    contributors jsonb NOT NULL,
+    rule text NOT NULL,
+    checked_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
 -- Name: books; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -180,6 +197,21 @@ CREATE TABLE public.device_tokens (
 
 
 --
+-- Name: notification_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.notification_settings (
+    user_id uuid NOT NULL,
+    replies boolean DEFAULT true NOT NULL,
+    room_comments boolean DEFAULT true NOT NULL,
+    room_joins boolean DEFAULT true NOT NULL,
+    room_book boolean DEFAULT true NOT NULL,
+    new_books boolean DEFAULT true NOT NULL,
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
 -- Name: notifications; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -191,7 +223,11 @@ CREATE TABLE public.notifications (
     message text,
     type character varying(32) DEFAULT 'SYSTEM'::character varying NOT NULL,
     title text,
-    book_id character varying(50)
+    book_id character varying(50),
+    updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
+    room_id character varying(50),
+    event_count integer DEFAULT 1 NOT NULL,
+    last_pushed_at timestamp without time zone
 );
 
 
@@ -419,6 +455,22 @@ ALTER TABLE ONLY public.book_highlights
 
 
 --
+-- Name: book_provenance book_provenance_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.book_provenance
+    ADD CONSTRAINT book_provenance_pkey PRIMARY KEY (book_id);
+
+
+--
+-- Name: book_provenance book_provenance_source_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.book_provenance
+    ADD CONSTRAINT book_provenance_source_key UNIQUE (source, source_id);
+
+
+--
 -- Name: books books_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -448,6 +500,14 @@ ALTER TABLE ONLY public.curated_buckets
 
 ALTER TABLE ONLY public.device_tokens
     ADD CONSTRAINT device_tokens_pkey PRIMARY KEY (token);
+
+
+--
+-- Name: notification_settings notification_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.notification_settings
+    ADD CONSTRAINT notification_settings_pkey PRIMARY KEY (user_id);
 
 
 --
@@ -639,6 +699,20 @@ CREATE INDEX notifications_user_created_idx ON public.notifications USING btree 
 
 
 --
+-- Name: notifications_unread_room_comments_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX notifications_unread_room_comments_key ON public.notifications USING btree (user_id, room_id) WHERE (((type)::text = 'ROOM_COMMENTS'::text) AND (is_read IS NOT TRUE));
+
+
+--
+-- Name: notifications_user_updated_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX notifications_user_updated_idx ON public.notifications USING btree (user_id, updated_at DESC);
+
+
+--
 -- Name: reading_progress_book_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -746,6 +820,14 @@ ALTER TABLE ONLY public.book_highlights
 
 
 --
+-- Name: book_provenance book_provenance_book_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.book_provenance
+    ADD CONSTRAINT book_provenance_book_id_fkey FOREIGN KEY (book_id) REFERENCES public.books(book_id) ON DELETE CASCADE;
+
+
+--
 -- Name: book_highlights book_highlights_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -778,11 +860,27 @@ ALTER TABLE ONLY public.device_tokens
 
 
 --
+-- Name: notification_settings notification_settings_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.notification_settings
+    ADD CONSTRAINT notification_settings_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(uuid) ON DELETE CASCADE;
+
+
+--
 -- Name: notifications notifications_book_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.notifications
     ADD CONSTRAINT notifications_book_id_fkey FOREIGN KEY (book_id) REFERENCES public.books(book_id) ON DELETE SET NULL;
+
+
+--
+-- Name: notifications notifications_room_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.notifications
+    ADD CONSTRAINT notifications_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.rooms(id) ON DELETE CASCADE;
 
 
 --

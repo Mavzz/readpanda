@@ -167,6 +167,52 @@ failing test rather than a broken fresh database.
    security block from the end of the current file. The Supabase SQL Editor
    and older Postgres versions reject the first four.
 
+### Importing public-domain books
+
+`cmd/gutenberg-import` fills the library with classics from Project Gutenberg.
+It only takes a book that is free to host in every country the app ships to,
+not just in the US:
+
+- the Gutenberg catalogue says it is public domain in the USA, and
+- **everyone credited** (author, translator, illustrator, editor) died at
+  least 70 years ago (`-term 100` clears every country, Mexico included).
+
+Each book is shelved by its subjects and Gutenberg categories (Sherlock Holmes
+→ Mystery / Detective, The Time Machine → Science Fiction / Time Travel), with
+at most `-per-shelf` books to a subgenre so the library isn't all Dickens.
+Later volumes of a set and works-of omnibuses are left out. The catalogue's
+summary becomes the description.
+
+It strips Gutenberg's header, licence, credit lines and links (their licence
+lets anyone charge for the texts once the name is gone; keeping it means paying
+them royalties), prints each book to a 5×8 in PDF with headless Chrome, and
+draws a cover of its own. Why each book passed goes in `book_provenance`, which
+is what you answer a copyright complaint with.
+
+```bash
+psql … -f scripts/migrate_book_provenance.sql     # once per database
+curl -LO https://www.gutenberg.org/cache/epub/feeds/rdf-files.tar.bz2
+mkdir rdf && tar -xjf rdf-files.tar.bz2 -C rdf    # optional: reading a folder is faster
+
+go run ./cmd/gutenberg-import -catalog rdf                     # 1. decide: writes gutenberg-report.csv only
+go run ./cmd/gutenberg-import -catalog rdf -out gutenberg-out  # 2. look at the PDFs and covers
+go run ./cmd/gutenberg-import -catalog rdf -apply              # 3. upload and add the rows
+```
+
+By default it takes the 100 most downloaded books that pass (`-limit`);
+`-ids 1342,84` picks specific ones and reports why any were refused, and
+`-exclude` leaves books out whatever the rules say. Every step can be re-run:
+a book already in `book_provenance` is skipped. A book whose HTML still
+mentions Gutenberg after cleaning is skipped as "needs review" rather than
+published. Imported books have no uploader and send no new-book notification.
+
+`-apply` uses the database and bucket in `.env.local`. Book ids come from the
+Gutenberg number, so a second run against another database (`PG_HOST` and
+friends set in the environment win over `.env.local`) reuses the same files.
+
+Needs Google Chrome (or set `CHROME_PATH`). Downloads come from a mirror
+(`-mirror`) two seconds apart, as Gutenberg asks of programs.
+
 ### Errors and logs
 
 The request logger prints one line per request with its status and duration.
