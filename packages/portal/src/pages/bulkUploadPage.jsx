@@ -24,7 +24,7 @@ const formatSize = (bytes) => `${(bytes / 1048576).toFixed(1)} MB`;
 const downloadTemplate = () => {
   const csv = toCSV([
     COLUMNS,
-    ["The Last Wish", "Andrzej Sapkowski", "The first Witcher stories.", "Fantasy", "Dark Fantasy", "Witcher/The Last Wish.epub", "covers/the-last-wish.jpg"],
+    ["Dracula", "Bram Stoker", "Jonathan Harker travels to Transylvania to meet a client.", "Horror", "Supernatural Horror", "Stoker/Dracula.pdf", "covers/dracula.jpg"],
   ]);
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
   const a = Object.assign(document.createElement("a"), { href: url, download: "books.csv" });
