@@ -6,6 +6,7 @@ Static pages anyone can open without signing in. The admin portal
 - `/` — a short landing page
 - `/support` — contact email and common questions (App Store Connect **Support URL**)
 - `/privacy` — privacy policy (App Store Connect **Privacy Policy URL**, and linked from the app)
+- `/terms` — terms of use, including the community rules App Review Guideline 1.2 asks for (linked from the app)
 
 Plain HTML and one stylesheet; no build step. `vercel.json` turns on clean
 URLs, so `privacy.html` is served at `/privacy`.
