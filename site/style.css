@@ -1,0 +1,145 @@
+/* The app's DS tokens (readpanda-mobile src/styles/global.js), so the site
+   looks like ReadPanda: deep navy surfaces, warm "reading lamp" accent,
+   Manrope, and no 1px lines between sections. */
+:root {
+  --background: #0b1326;
+  --surface-low: #131b2e;
+  --surface: #171f33;
+  --primary: #ffddb8;
+  --on-surface: #dae2fd;
+  --on-surface-variant: #d6c3b2;
+  --body: #c6cde8;
+  --radius: 24px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--body);
+  font-family: "Manrope", system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-text-size-adjust: 100%;
+}
+
+main {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 48px 16px 64px;
+}
+
+.brand {
+  display: inline-block;
+  color: var(--primary);
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  margin-bottom: 32px;
+}
+
+h1 {
+  color: var(--on-surface);
+  font-weight: 800;
+  font-size: 32px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  margin: 0 0 8px;
+}
+
+h2 {
+  color: var(--on-surface);
+  font-weight: 800;
+  font-size: 20px;
+  letter-spacing: -0.01em;
+  margin: 40px 0 8px;
+}
+
+h3 {
+  color: var(--on-surface);
+  font-weight: 700;
+  font-size: 16px;
+  margin: 24px 0 4px;
+}
+
+.meta {
+  color: var(--on-surface-variant);
+  font-size: 14px;
+  margin: 0 0 32px;
+}
+
+a {
+  color: var(--primary);
+}
+
+ul {
+  padding-left: 20px;
+}
+
+li {
+  margin: 4px 0;
+}
+
+/* A tonal panel instead of a bordered box. */
+.panel {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  margin: 24px 0;
+}
+
+.panel p {
+  margin: 0;
+}
+
+.panel p + p {
+  margin-top: 8px;
+}
+
+.email {
+  font-weight: 700;
+  font-size: 18px;
+  word-break: break-all;
+}
+
+details {
+  background: var(--surface-low);
+  border-radius: var(--radius);
+  padding: 16px 24px;
+  margin: 8px 0;
+}
+
+summary {
+  color: var(--on-surface);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+details p {
+  margin: 8px 0 0;
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 32px;
+}
+
+.links a {
+  background: var(--surface);
+  border-radius: 9999px;
+  padding: 12px 24px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+footer {
+  color: var(--on-surface-variant);
+  font-size: 13px;
+  margin-top: 56px;
+}
