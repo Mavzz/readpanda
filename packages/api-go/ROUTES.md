@@ -98,7 +98,7 @@ Every route here acts on the caller, taken from the access token. The old `?user
 | `POST /books/upload` with a manuscript | Every user except the publisher, and anyone with New books off | `NEW_BOOK`, "New book added", `book_id` set |
 | `POST /room/{id}/book/{bookId}/comments` with `parent_id` | The thread's author, if it isn't the replier, they're still a member, and Replies is on | `REPLY`, "{username} replied", the reply cut to 120 characters; `room_id`, `book_id` set |
 | `PATCH /room/{id}/reading` to a different, non-null book | Every member except the creator, if Room picks a book is on | `ROOM_BOOK`, title the room name, "Now reading {Book title}"; `room_id`, `book_id` set. Clearing the book, or sending the one it already has, notifies nobody. |
-| `POST /room/join` (a new member, not a 404 or 409) | The room's creator, if New members is on | `ROOM_JOIN`, title the room name, "{username} joined the room"; `room_id` set |
+| `POST /room/join` or `POST /room/{id}/join` (a new member, not a 403, 404 or 409) | The room's creator, if New members is on | `ROOM_JOIN`, title the room name, "{username} joined the room"; `room_id` set |
 | `POST /room/{id}/book/{bookId}/comments` | Every other member, except a reply's thread author who got `REPLY` | `ROOM_COMMENTS`, title the room name. "{username}: {text}" if the reader has reached the page (`page <= furthest_page`), otherwise "{username} commented on p. {page+1}". One unread row per reader per room: later comments update it to "{n} new comments" (no text) and it pushes at most once per `NOTIFY_ROOM_COMMENT_WINDOW`. A retried POST (same `client_id`) notifies nobody. |
 
 Push payload `data`: `{ type, notification_id, book_id?, room_id?, room_name? }`.
@@ -158,10 +158,13 @@ Generic view over every table in the `public` schema, used by the portal's Users
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| POST | `/room/create` | Yes | Create a room. Body: `{ name, description, is_private }`. Every room gets an invite code, and the creator is enrolled as an `admin` member. |
+| POST | `/room/create` | Yes | Create a room. Body: `{ name, description, is_private }`. `is_private` defaults to `true` (Invite only) when left out. Every room gets an invite code, and the creator is enrolled as an `admin` member. |
 | GET | `/room/my-rooms` | Yes | Rooms the user created or joined. Returns a bare array. |
 | POST | `/room/join` | Yes | Join a room by code. Body: `{ invite_code }`. `404` unknown code, `409` already a member. |
+| GET | `/room/open?book_id=&limit=&offset=` | Yes | Open rooms (`is_private = false`) the caller didn't make and isn't in, optionally only those reading `book_id`. Rooms reading a book first, then more members, then newer. `limit` defaults to 20, at most 50. Returns `{ rooms: [{ id, name, description, current_book: { book_id, title, cover_image_url } \| null, member_count, creator_username, created_at }], has_more }`; no invite code or member list. Requires `scripts/migrate_open_rooms.sql`. |
+| POST | `/room/{id}/join` | Yes | Join an open room without a code. Returns the Room Detail, and tells the creator as `/room/join` does. `404` unknown room, `403` invite-only, `409` already a member (even if the room has since gone invite-only). |
 | GET | `/room/{id}` | Yes | Full Room Detail: the room, `members[]` (`user_id`, `username`, `role`, `joined_at`), `current_book`, and `bucket` (`{ id, name, type, books[] }`). `403` for non-members. |
+| PATCH | `/room/{id}` | Yes | Change who can join. Body: `{ is_private }`; fields left out are unchanged. Creator-only (`403`). Members and the invite code stay. Returns the Room Detail. |
 | DELETE | `/room/{id}` | Yes | Delete a room. Creator-only (`403`); `room_members` rows cascade. Returns `204`. |
 | DELETE | `/room/{id}/members/me` | Yes | Leave a room. The creator can't leave (`403`) — they delete it instead. Returns `204`. |
 | PATCH | `/room/{id}/reading` | Yes | Set what the room reads. Body: `{ current_book_id, bucket_id, bucket_type }` (`bucket_type` is `user` or `curated`; send `null`s to clear). Creator-only (`403`); with a bucket set, `current_book_id` must belong to it (`400`). Returns the updated Room Detail. |

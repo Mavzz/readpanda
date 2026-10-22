@@ -336,7 +336,7 @@ CREATE TABLE public.rooms (
     name character varying(50) NOT NULL,
     description text,
     invite_code character varying(6),
-    is_private boolean,
+    is_private boolean DEFAULT true NOT NULL,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     admin_id uuid NOT NULL,
@@ -689,6 +689,13 @@ CREATE INDEX idx_user_buckets_user_id ON public.user_buckets USING btree (user_i
 --
 
 CREATE INDEX idx_userpreferences_userid ON public.user_preferences USING btree (user_id);
+
+
+--
+-- Name: rooms_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX rooms_open_idx ON public.rooms USING btree (current_book_id) WHERE (NOT is_private);
 
 
 --

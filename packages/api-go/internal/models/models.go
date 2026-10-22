@@ -221,6 +221,19 @@ type RoomSummary struct {
 	GroupProgressPct int                `json:"group_progress_pct"`
 }
 
+// OpenRoom is a room as someone outside it sees it in the open-rooms list.
+// It's its own type rather than RoomSummary with fields blanked, so an
+// invite code or member list can't leak into the list through a later edit.
+type OpenRoom struct {
+	ID          string       `json:"id"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	CurrentBook *BookPreview `json:"current_book"`
+	MemberCount int          `json:"member_count"`
+	CreatorName string       `json:"creator_username"`
+	CreatedAt   time.Time    `json:"created_at"`
+}
+
 // RoomBook represents a book in a reading room
 type RoomBook struct {
 	ID        string    `json:"id"`

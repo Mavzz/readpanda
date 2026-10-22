@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,12 +46,15 @@ func (h *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
-		IsPrivate   bool   `json:"is_private"`
+		IsPrivate   *bool  `json:"is_private"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	// A room only becomes findable when its creator says so. A plain bool
+	// would read a missing value as false, which is Open.
+	isPrivate := req.IsPrivate == nil || *req.IsPrivate
 
 	name := strings.TrimSpace(req.Name)
 	if name == "" || len(name) > 50 {
@@ -76,7 +80,7 @@ func (h *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 
 		_, err = database.DB.Exec(
 			`INSERT INTO rooms (id,name,description,is_private,invite_code,created_at,updated_at,admin_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			roomID, name, req.Description, req.IsPrivate, code, now, now, userID,
+			roomID, name, req.Description, isPrivate, code, now, now, userID,
 		)
 		if err == nil {
 			inviteCode = code
@@ -104,7 +108,7 @@ func (h *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondRoomCreated(w, roomID, name, req.Description, req.IsPrivate, &inviteCode, userID, now)
+	respondRoomCreated(w, roomID, name, req.Description, isPrivate, &inviteCode, userID, now)
 }
 
 func respondRoomCreated(w http.ResponseWriter, roomID, name, description string, isPrivate bool, inviteCode *string, adminID string, now time.Time) {
@@ -196,6 +200,94 @@ func (h *RoomHandler) GetMyRooms(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(rooms)
+}
+
+const (
+	openRoomsDefaultLimit = 20
+	openRoomsMaxLimit     = 50
+)
+
+// ListOpenRooms lists rooms whose creator chose Open and the caller isn't in,
+// optionally only those reading ?book_id. Rooms reading something come first,
+// then bigger rooms, then newer ones: a simple order that favours rooms a
+// reader can start on today.
+func (h *RoomHandler) ListOpenRooms(w http.ResponseWriter, r *http.Request) {
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	if !ok {
+		return
+	}
+
+	q := r.URL.Query()
+	limit, err := strconv.Atoi(q.Get("limit"))
+	if err != nil || limit <= 0 {
+		limit = openRoomsDefaultLimit
+	}
+	limit = min(limit, openRoomsMaxLimit)
+	offset, err := strconv.Atoi(q.Get("offset"))
+	if err != nil || offset < 0 {
+		offset = 0
+	}
+
+	// One row past the page says whether there's another, without a count.
+	rows, err := database.DB.Query(`
+		SELECT r.id, r.name, COALESCE(r.description, ''), r.created_at,
+		       b.book_id, b.title, b.cover_image_url,
+		       u.username,
+		       (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS member_count
+		  FROM rooms r
+		  JOIN users u ON u.uuid = r.admin_id
+		  LEFT JOIN books b ON b.book_id = r.current_book_id
+		 WHERE NOT r.is_private
+		   AND r.admin_id <> $1
+		   AND NOT EXISTS (SELECT 1 FROM room_members m WHERE m.room_id = r.id AND m.user_id = $1)
+		   AND ($2 = '' OR r.current_book_id = $2)
+		 ORDER BY (r.current_book_id IS NOT NULL) DESC, member_count DESC, r.created_at DESC, r.id
+		 LIMIT $3 OFFSET $4`,
+		userID, q.Get("book_id"), limit+1, offset,
+	)
+	if err != nil {
+		log.Printf("ListOpenRooms: %v", err)
+		http.Error(w, `{"error": "Failed to get open rooms"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	rooms := []models.OpenRoom{}
+	for rows.Next() {
+		var room models.OpenRoom
+		var bookID, bookTitle sql.NullString
+		var coverURL *string
+		if err := rows.Scan(
+			&room.ID, &room.Name, &room.Description, &room.CreatedAt,
+			&bookID, &bookTitle, &coverURL,
+			&room.CreatorName, &room.MemberCount,
+		); err != nil {
+			log.Printf("ListOpenRooms scan: %v", err)
+			http.Error(w, `{"error": "Failed to get open rooms"}`, http.StatusInternalServerError)
+			return
+		}
+		if bookID.Valid {
+			room.CurrentBook = &models.BookPreview{
+				BookID:        bookID.String,
+				Title:         bookTitle.String,
+				CoverImageURL: coverURL,
+			}
+		}
+		rooms = append(rooms, room)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ListOpenRooms rows: %v", err)
+		http.Error(w, `{"error": "Failed to get open rooms"}`, http.StatusInternalServerError)
+		return
+	}
+
+	hasMore := len(rooms) > limit
+	if hasMore {
+		rooms = rooms[:limit]
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"rooms": rooms, "has_more": hasMore})
 }
 
 // isRoomMember reports whether the user belongs to the room (as creator or member).
@@ -447,6 +539,13 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	joinRoomAs(w, room, userID)
+}
+
+// joinRoomAs makes userID a member of room and answers with its Room Detail.
+// Joining by code and joining an open room share it, so the creator's
+// notification and the response are the same for both.
+func joinRoomAs(w http.ResponseWriter, room models.Room, userID string) {
 	already, err := isRoomMember(room.ID, userID)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to join room"}`, http.StatusInternalServerError)
@@ -488,6 +587,92 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(payload)
+}
+
+// JoinOpenRoom joins a room without a code, which only an open room allows.
+// The preview the reader joined from can be stale: the creator may have made
+// the room invite-only or deleted it since, and the app says which.
+func (h *RoomHandler) JoinOpenRoom(w http.ResponseWriter, r *http.Request) {
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	if !ok {
+		return
+	}
+
+	var room models.Room
+	err := database.DB.QueryRow(
+		`SELECT id, name, description, invite_code, is_private, admin_id, created_at, updated_at
+		   FROM rooms WHERE id = $1`,
+		mux.Vars(r)["id"],
+	).Scan(&room.ID, &room.Name, &room.Description, &room.InviteCode, &room.IsPrivate,
+		&room.AdminID, &room.CreatedAt, &room.UpdatedAt)
+	if err == sql.ErrNoRows {
+		http.Error(w, `{"error": "Room not found"}`, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, `{"error": "Failed to join room"}`, http.StatusInternalServerError)
+		return
+	}
+	// A member is told so even if the room has closed since, so the app
+	// opens the room rather than saying it's invite-only.
+	if room.IsPrivate {
+		if member, err := isRoomMember(room.ID, userID); err == nil && member {
+			http.Error(w, `{"error": "You're already in this room"}`, http.StatusConflict)
+			return
+		}
+		http.Error(w, `{"error": "This room is invite-only"}`, http.StatusForbidden)
+		return
+	}
+
+	joinRoomAs(w, room, userID)
+}
+
+// UpdateRoom — PATCH /room/{id}
+// Body: {"is_private": true|false}
+// Only the creator may change who can join. Closing a room keeps everyone
+// already in it and its invite code; it just leaves the open-rooms lists.
+// Fields left out stay as they are, so name and description can join later.
+func (h *RoomHandler) UpdateRoom(w http.ResponseWriter, r *http.Request) {
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	if !ok {
+		return
+	}
+	roomID := mux.Vars(r)["id"]
+
+	var req struct {
+		IsPrivate *bool `json:"is_private"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	var adminID string
+	err := database.DB.QueryRow(`SELECT admin_id FROM rooms WHERE id = $1`, roomID).Scan(&adminID)
+	if err == sql.ErrNoRows {
+		http.Error(w, `{"error": "Room not found"}`, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, `{"error": "Failed to update room"}`, http.StatusInternalServerError)
+		return
+	}
+	if adminID != userID {
+		http.Error(w, `{"error": "Only the room creator can change this room"}`, http.StatusForbidden)
+		return
+	}
+
+	if req.IsPrivate != nil {
+		if _, err := database.DB.Exec(
+			`UPDATE rooms SET is_private = $1, updated_at = $2 WHERE id = $3`,
+			*req.IsPrivate, time.Now().UTC(), roomID,
+		); err != nil {
+			http.Error(w, `{"error": "Failed to update room"}`, http.StatusInternalServerError)
+			return
+		}
+	}
+
+	h.GetRoomDetail(w, r)
 }
 
 // SetRoomReading — PATCH /room/{id}/reading
