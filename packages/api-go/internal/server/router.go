@@ -112,8 +112,12 @@ func NewRouter(cfg *config.Config) http.Handler {
 	router.HandleFunc(apiPrefix+"/room/create", roomHandler.CreateRoom).Methods("POST", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/room/my-rooms", roomHandler.GetMyRooms).Methods("GET", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/room/join", roomHandler.JoinRoom).Methods("POST", "OPTIONS")
+	// Before /room/{id}, like my-rooms, so mux doesn't read "open" as an id.
+	router.HandleFunc(apiPrefix+"/room/open", roomHandler.ListOpenRooms).Methods("GET", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/room/{id}", roomHandler.GetRoomDetail).Methods("GET", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/room/{id}/reading", roomHandler.SetRoomReading).Methods("PATCH", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}/join", roomHandler.JoinOpenRoom).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}", roomHandler.UpdateRoom).Methods("PATCH", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/room/{id}", roomHandler.DeleteRoom).Methods("DELETE", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/room/{id}/members/me", roomHandler.LeaveRoom).Methods("DELETE", "OPTIONS")
 
