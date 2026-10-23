@@ -8,9 +8,14 @@ import (
 
 type comment struct {
 	ID       string `json:"id"`
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
 	Page     int    `json:"page"`
 	Body     string `json:"body"`
 	ParentID string `json:"parent_id"`
+	Likes    int    `json:"likes"`
+	Deleted  string `json:"deleted"`
+	Hidden   string `json:"hidden"`
 	Replies  []comment
 }
 

@@ -84,8 +84,11 @@ CREATE TABLE public.book_comments (
     client_id character varying(64),
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    deleted_at timestamp without time zone,
+    deleted_by character varying(10),
     CONSTRAINT book_comments_anchor_text_check CHECK (((anchor_text IS NULL) OR (char_length(anchor_text) <= 1000))),
-    CONSTRAINT book_comments_body_check CHECK (((char_length(body) >= 1) AND (char_length(body) <= 2000))),
+    CONSTRAINT book_comments_body_check CHECK ((((deleted_at IS NOT NULL) AND (body = ''::text)) OR ((char_length(body) >= 1) AND (char_length(body) <= 2000)))),
+    CONSTRAINT book_comments_deleted_by_check CHECK (((deleted_by IS NULL) OR ((deleted_by)::text = ANY (ARRAY['author'::text, 'moderator'::text])))),
     CONSTRAINT book_comments_page_check CHECK ((page >= 0))
 );
 
@@ -150,6 +153,32 @@ CREATE TABLE public.books (
     page_count integer,
     author_from_lookup boolean DEFAULT false NOT NULL,
     pages_from_lookup boolean DEFAULT false NOT NULL
+);
+
+
+--
+-- Name: content_reports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.content_reports (
+    id character varying(50) NOT NULL,
+    reporter_id uuid,
+    target_type character varying(10) NOT NULL,
+    target_id character varying(50) NOT NULL,
+    target_user_id uuid,
+    room_id character varying(50),
+    reason character varying(20) NOT NULL,
+    details text,
+    snapshot text NOT NULL,
+    status character varying(10) DEFAULT 'open'::character varying NOT NULL,
+    action character varying(20),
+    resolved_by uuid,
+    resolved_at timestamp without time zone,
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT content_reports_details_check CHECK (((details IS NULL) OR (char_length(details) <= 500))),
+    CONSTRAINT content_reports_reason_check CHECK (((reason)::text = ANY (ARRAY['harassment'::text, 'hate'::text, 'sexual'::text, 'violence'::text, 'self_harm'::text, 'spam'::text, 'other'::text]))),
+    CONSTRAINT content_reports_status_check CHECK (((status)::text = ANY (ARRAY['open'::text, 'actioned'::text, 'dismissed'::text]))),
+    CONSTRAINT content_reports_target_type_check CHECK (((target_type)::text = ANY (ARRAY['comment'::text, 'user'::text, 'room'::text])))
 );
 
 
@@ -336,7 +365,7 @@ CREATE TABLE public.rooms (
     name character varying(50) NOT NULL,
     description text,
     invite_code character varying(6),
-    is_private boolean,
+    is_private boolean DEFAULT true NOT NULL,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     admin_id uuid NOT NULL,
@@ -345,6 +374,18 @@ CREATE TABLE public.rooms (
     current_bucket_type character varying(10),
     CONSTRAINT rooms_bucket_pair_check CHECK (((current_bucket_id IS NULL) = (current_bucket_type IS NULL))),
     CONSTRAINT rooms_current_bucket_type_check CHECK (((current_bucket_type IS NULL) OR ((current_bucket_type)::text = ANY (ARRAY[('user'::character varying)::text, ('curated'::character varying)::text]))))
+);
+
+
+--
+-- Name: user_blocks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.user_blocks (
+    blocker_id uuid NOT NULL,
+    blocked_id uuid NOT NULL,
+    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT user_blocks_check CHECK ((blocker_id <> blocked_id))
 );
 
 
@@ -479,6 +520,14 @@ ALTER TABLE ONLY public.books
 
 
 --
+-- Name: content_reports content_reports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.content_reports
+    ADD CONSTRAINT content_reports_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: curated_bucket_books curated_bucket_books_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -564,6 +613,14 @@ ALTER TABLE ONLY public.rooms
 
 ALTER TABLE ONLY public.rooms
     ADD CONSTRAINT rooms_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: user_blocks user_blocks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_blocks
+    ADD CONSTRAINT user_blocks_pkey PRIMARY KEY (blocker_id, blocked_id);
 
 
 --
@@ -689,6 +746,27 @@ CREATE INDEX idx_user_buckets_user_id ON public.user_buckets USING btree (user_i
 --
 
 CREATE INDEX idx_userpreferences_userid ON public.user_preferences USING btree (user_id);
+
+
+--
+-- Name: rooms_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX rooms_open_idx ON public.rooms USING btree (current_book_id) WHERE (NOT is_private);
+
+
+--
+-- Name: content_reports_open_once; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX content_reports_open_once ON public.content_reports USING btree (reporter_id, target_type, target_id) WHERE ((status)::text = 'open'::text);
+
+
+--
+-- Name: content_reports_status_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX content_reports_status_idx ON public.content_reports USING btree (status, created_at DESC);
 
 
 --
@@ -852,6 +930,30 @@ ALTER TABLE ONLY public.curated_bucket_books
 
 
 --
+-- Name: content_reports content_reports_reporter_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.content_reports
+    ADD CONSTRAINT content_reports_reporter_id_fkey FOREIGN KEY (reporter_id) REFERENCES public.users(uuid) ON DELETE SET NULL;
+
+
+--
+-- Name: content_reports content_reports_resolved_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.content_reports
+    ADD CONSTRAINT content_reports_resolved_by_fkey FOREIGN KEY (resolved_by) REFERENCES public.users(uuid) ON DELETE SET NULL;
+
+
+--
+-- Name: content_reports content_reports_target_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.content_reports
+    ADD CONSTRAINT content_reports_target_user_id_fkey FOREIGN KEY (target_user_id) REFERENCES public.users(uuid) ON DELETE SET NULL;
+
+
+--
 -- Name: device_tokens device_tokens_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -945,6 +1047,22 @@ ALTER TABLE ONLY public.rooms
 
 ALTER TABLE ONLY public.books
     ADD CONSTRAINT user_books_fkey FOREIGN KEY (user_id) REFERENCES public.users(uuid);
+
+
+--
+-- Name: user_blocks user_blocks_blocked_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_blocks
+    ADD CONSTRAINT user_blocks_blocked_id_fkey FOREIGN KEY (blocked_id) REFERENCES public.users(uuid) ON DELETE CASCADE;
+
+
+--
+-- Name: user_blocks user_blocks_blocker_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_blocks
+    ADD CONSTRAINT user_blocks_blocker_id_fkey FOREIGN KEY (blocker_id) REFERENCES public.users(uuid) ON DELETE CASCADE;
 
 
 --

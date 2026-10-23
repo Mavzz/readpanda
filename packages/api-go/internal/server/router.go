@@ -24,6 +24,7 @@ func NewRouter(cfg *config.Config) http.Handler {
 	commentHandler := handlers.NewCommentHandler(cfg)
 	highlightHandler := handlers.NewHighlightHandler(cfg)
 	discoverHandler := handlers.NewDiscoverHandler(cfg)
+	reportHandler := handlers.NewReportHandler(cfg)
 	adminHandler := handlers.NewAdminHandler(cfg)
 
 	// Create router
@@ -86,6 +87,9 @@ func NewRouter(cfg *config.Config) http.Handler {
 	router.HandleFunc(apiPrefix+"/users/me/devices/{token}", notificationHandler.UnregisterDevice).Methods("DELETE", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/users/me/notification-settings", notificationHandler.GetNotificationSettings).Methods("GET", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/users/me/notification-settings", notificationHandler.UpdateNotificationSettings).Methods("PUT", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/users/me/blocks", userHandler.ListBlocks).Methods("GET")
+	router.HandleFunc(apiPrefix+"/users/me/blocks", userHandler.BlockUser).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/users/me/blocks/{userId}", userHandler.UnblockUser).Methods("DELETE", "OPTIONS")
 
 	// User Buckets routes
 	router.HandleFunc(apiPrefix+"/users/me/buckets", bucketHandler.ListUserBuckets).Methods("GET")
@@ -112,8 +116,12 @@ func NewRouter(cfg *config.Config) http.Handler {
 	router.HandleFunc(apiPrefix+"/room/create", roomHandler.CreateRoom).Methods("POST", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/room/my-rooms", roomHandler.GetMyRooms).Methods("GET", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/room/join", roomHandler.JoinRoom).Methods("POST", "OPTIONS")
+	// Before /room/{id}, like my-rooms, so mux doesn't read "open" as an id.
+	router.HandleFunc(apiPrefix+"/room/open", roomHandler.ListOpenRooms).Methods("GET", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/room/{id}", roomHandler.GetRoomDetail).Methods("GET", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/room/{id}/reading", roomHandler.SetRoomReading).Methods("PATCH", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}/join", roomHandler.JoinOpenRoom).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/room/{id}", roomHandler.UpdateRoom).Methods("PATCH", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/room/{id}", roomHandler.DeleteRoom).Methods("DELETE", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/room/{id}/members/me", roomHandler.LeaveRoom).Methods("DELETE", "OPTIONS")
 
@@ -133,6 +141,8 @@ func NewRouter(cfg *config.Config) http.Handler {
 	router.HandleFunc(apiPrefix+"/room/{id}/book/{bookId}/comments", commentHandler.GetBookComments).Methods("GET", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/room/{id}/book/{bookId}/comments", commentHandler.CreateComment).Methods("POST", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/room/{id}/book/{bookId}/comments/read", commentHandler.MarkRead).Methods("POST", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/comments/{commentId}", commentHandler.DeleteComment).Methods("DELETE", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/reports", reportHandler.CreateReport).Methods("POST", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/comments/{commentId}/like", commentHandler.LikeComment).Methods("POST", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/comments/{commentId}/like", commentHandler.UnlikeComment).Methods("DELETE", "OPTIONS")
 
@@ -152,6 +162,9 @@ func NewRouter(cfg *config.Config) http.Handler {
 	router.HandleFunc(apiPrefix+"/admin/tables/{table}/rows", adminHandler.InsertTableRow).Methods("POST")
 	router.HandleFunc(apiPrefix+"/admin/tables/{table}/rows", adminHandler.DeleteTableRow).Methods("DELETE")
 	router.HandleFunc(apiPrefix+"/admin/users/{uuid}", adminHandler.GetUserDetail).Methods("GET")
+	router.HandleFunc(apiPrefix+"/admin/users/{uuid}", adminHandler.SetUserActive).Methods("PATCH")
+	router.HandleFunc(apiPrefix+"/admin/reports", adminHandler.ListReports).Methods("GET")
+	router.HandleFunc(apiPrefix+"/admin/reports/{id}/resolve", adminHandler.ResolveReport).Methods("POST")
 
 	return router
 }

@@ -64,6 +64,11 @@ func TestProtectedRoutesNeedAToken(t *testing.T) {
 	for _, r := range []struct{ method, path string }{
 		{"GET", "/progress"},
 		{"GET", "/room/my-rooms"},
+		{"GET", "/room/open"},
+		{"DELETE", "/comments/cm_1"},
+		{"GET", "/users/me/blocks"},
+		{"POST", "/users/me/blocks"},
+		{"POST", "/reports"},
 		{"POST", "/room/create"},
 		{"GET", "/books/bk_1/highlights"},
 		{"GET", "/users/me/buckets"},

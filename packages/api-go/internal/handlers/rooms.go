@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,20 +42,29 @@ func (h *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !requireActive(w, userID) {
+		return
+	}
 
 	var req struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
-		IsPrivate   bool   `json:"is_private"`
+		IsPrivate   *bool  `json:"is_private"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	// A room only becomes findable when its creator says so. A plain bool
+	// would read a missing value as false, which is Open.
+	isPrivate := req.IsPrivate == nil || *req.IsPrivate
 
 	name := strings.TrimSpace(req.Name)
 	if name == "" || len(name) > 50 {
 		http.Error(w, "name is required and must be 1-50 characters", http.StatusBadRequest)
+		return
+	}
+	if refusedWords(w, "name", name) || refusedWords(w, "description", req.Description) {
 		return
 	}
 
@@ -76,7 +86,7 @@ func (h *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 
 		_, err = database.DB.Exec(
 			`INSERT INTO rooms (id,name,description,is_private,invite_code,created_at,updated_at,admin_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			roomID, name, req.Description, req.IsPrivate, code, now, now, userID,
+			roomID, name, req.Description, isPrivate, code, now, now, userID,
 		)
 		if err == nil {
 			inviteCode = code
@@ -104,7 +114,7 @@ func (h *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondRoomCreated(w, roomID, name, req.Description, req.IsPrivate, &inviteCode, userID, now)
+	respondRoomCreated(w, roomID, name, req.Description, isPrivate, &inviteCode, userID, now)
 }
 
 func respondRoomCreated(w http.ResponseWriter, roomID, name, description string, isPrivate bool, inviteCode *string, adminID string, now time.Time) {
@@ -127,6 +137,10 @@ func respondRoomCreated(w http.ResponseWriter, roomID, name, description string,
 func (h *RoomHandler) GetMyRooms(w http.ResponseWriter, r *http.Request) {
 	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
+		return
+	}
+	// Pull to refresh on Home and Rooms (report-block R10.1).
+	if !requireActive(w, userID) {
 		return
 	}
 
@@ -184,7 +198,7 @@ func (h *RoomHandler) GetMyRooms(w http.ResponseWriter, r *http.Request) {
 		if rooms[i].CurrentBookID != nil {
 			bookID = sql.NullString{String: *rooms[i].CurrentBookID, Valid: true}
 		}
-		members, groupPct, err := loadRoomMembers(rooms[i].ID, bookID)
+		members, groupPct, err := loadRoomMembers(rooms[i].ID, bookID, userID)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to get room members"}`, http.StatusInternalServerError)
 			return
@@ -196,6 +210,95 @@ func (h *RoomHandler) GetMyRooms(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(rooms)
+}
+
+const (
+	openRoomsDefaultLimit = 20
+	openRoomsMaxLimit     = 50
+)
+
+// ListOpenRooms lists rooms whose creator chose Open and the caller isn't in,
+// optionally only those reading ?book_id. Rooms reading something come first,
+// then bigger rooms, then newer ones: a simple order that favours rooms a
+// reader can start on today.
+func (h *RoomHandler) ListOpenRooms(w http.ResponseWriter, r *http.Request) {
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	if !ok {
+		return
+	}
+
+	q := r.URL.Query()
+	limit, err := strconv.Atoi(q.Get("limit"))
+	if err != nil || limit <= 0 {
+		limit = openRoomsDefaultLimit
+	}
+	limit = min(limit, openRoomsMaxLimit)
+	offset, err := strconv.Atoi(q.Get("offset"))
+	if err != nil || offset < 0 {
+		offset = 0
+	}
+
+	// One row past the page says whether there's another, without a count.
+	rows, err := database.DB.Query(`
+		SELECT r.id, r.name, COALESCE(r.description, ''), r.created_at,
+		       b.book_id, b.title, b.cover_image_url,
+		       u.username,
+		       (SELECT COUNT(*) FROM room_members m WHERE m.room_id = r.id) AS member_count
+		  FROM rooms r
+		  JOIN users u ON u.uuid = r.admin_id
+		  LEFT JOIN books b ON b.book_id = r.current_book_id
+		 WHERE NOT r.is_private
+		   AND r.admin_id <> $1
+		   AND NOT EXISTS (SELECT 1 FROM room_members m WHERE m.room_id = r.id AND m.user_id = $1)
+		   AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $1 AND b.blocked_id = r.admin_id)
+		   AND ($2 = '' OR r.current_book_id = $2)
+		 ORDER BY (r.current_book_id IS NOT NULL) DESC, member_count DESC, r.created_at DESC, r.id
+		 LIMIT $3 OFFSET $4`,
+		userID, q.Get("book_id"), limit+1, offset,
+	)
+	if err != nil {
+		log.Printf("ListOpenRooms: %v", err)
+		http.Error(w, `{"error": "Failed to get open rooms"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	rooms := []models.OpenRoom{}
+	for rows.Next() {
+		var room models.OpenRoom
+		var bookID, bookTitle sql.NullString
+		var coverURL *string
+		if err := rows.Scan(
+			&room.ID, &room.Name, &room.Description, &room.CreatedAt,
+			&bookID, &bookTitle, &coverURL,
+			&room.CreatorName, &room.MemberCount,
+		); err != nil {
+			log.Printf("ListOpenRooms scan: %v", err)
+			http.Error(w, `{"error": "Failed to get open rooms"}`, http.StatusInternalServerError)
+			return
+		}
+		if bookID.Valid {
+			room.CurrentBook = &models.BookPreview{
+				BookID:        bookID.String,
+				Title:         bookTitle.String,
+				CoverImageURL: coverURL,
+			}
+		}
+		rooms = append(rooms, room)
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("ListOpenRooms rows: %v", err)
+		http.Error(w, `{"error": "Failed to get open rooms"}`, http.StatusInternalServerError)
+		return
+	}
+
+	hasMore := len(rooms) > limit
+	if hasMore {
+		rooms = rooms[:limit]
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"rooms": rooms, "has_more": hasMore})
 }
 
 // isRoomMember reports whether the user belongs to the room (as creator or member).
@@ -212,6 +315,7 @@ func notifyJoin(room models.Room, userID string) {
 		return
 	}
 	if err := notify.Send([]string{room.AdminID}, notify.Notification{
+		ActorID:  userID,
 		Type:     models.NotificationTypeRoomJoin,
 		Title:    room.Name,
 		Message:  username + " joined the room",
@@ -284,16 +388,17 @@ func loadRoomBucket(bucketID, bucketType string) (*models.RoomBucket, error) {
 // room's current book, and the group's average. LEFT JOIN, so a member who
 // hasn't opened the book still counts — at 0 — rather than inflating the
 // average by dropping out of it. Ordered like GetRoomProgress.
-func loadRoomMembers(roomID string, currentBookID sql.NullString) ([]models.RoomMemberDetail, int, error) {
+func loadRoomMembers(roomID string, currentBookID sql.NullString, viewerID string) ([]models.RoomMemberDetail, int, error) {
 	rows, err := database.DB.Query(
 		`SELECT m.user_id, u.username, m.role, m.joined_at,
-		        COALESCE(p.current_page, 0), COALESCE(p.total_pages, 0)
+		        COALESCE(p.current_page, 0), COALESCE(p.total_pages, 0),
+		        EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $3 AND b.blocked_id = m.user_id)
 		   FROM room_members m
 		   JOIN users u ON u.uuid = m.user_id
 		   LEFT JOIN reading_progress p ON p.user_id = m.user_id AND p.book_id = $2
 		  WHERE m.room_id = $1
 		  ORDER BY (m.role = 'admin') DESC, m.joined_at`,
-		roomID, currentBookID,
+		roomID, currentBookID, viewerID,
 	)
 	if err != nil {
 		return nil, 0, err
@@ -305,7 +410,7 @@ func loadRoomMembers(roomID string, currentBookID sql.NullString) ([]models.Room
 	for rows.Next() {
 		var m models.RoomMemberDetail
 		var currentPage, totalPages int
-		if err := rows.Scan(&m.UserID, &m.Username, &m.Role, &m.JoinedAt, &currentPage, &totalPages); err != nil {
+		if err := rows.Scan(&m.UserID, &m.Username, &m.Role, &m.JoinedAt, &currentPage, &totalPages, &m.Blocked); err != nil {
 			return nil, 0, err
 		}
 		if currentBookID.Valid {
@@ -328,7 +433,8 @@ func loadRoomMembers(roomID string, currentBookID sql.NullString) ([]models.Room
 // loadRoomDetail reads everything Room Detail shows: the room, what it's
 // reading (standalone book, or a current book from a bucket), and its members.
 // sql.ErrNoRows means there is no such room. Membership is the caller's check.
-func loadRoomDetail(roomID string) (*models.RoomDetail, error) {
+// viewerID is who's asking, for the members they've blocked.
+func loadRoomDetail(roomID, viewerID string) (*models.RoomDetail, error) {
 	var detail models.RoomDetail
 	var currentBookID, currentBucketID, currentBucketType sql.NullString
 	err := database.DB.QueryRow(
@@ -366,7 +472,7 @@ func loadRoomDetail(roomID string) (*models.RoomDetail, error) {
 		detail.Bucket = bucket
 	}
 
-	members, groupPct, err := loadRoomMembers(roomID, currentBookID)
+	members, groupPct, err := loadRoomMembers(roomID, currentBookID, viewerID)
 	if err != nil {
 		return nil, fmt.Errorf("room members: %w", err)
 	}
@@ -385,7 +491,7 @@ func (h *RoomHandler) GetRoomDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	roomID := mux.Vars(r)["id"]
 
-	detail, err := loadRoomDetail(roomID)
+	detail, err := loadRoomDetail(roomID, userID)
 	if err == sql.ErrNoRows {
 		http.Error(w, `{"error": "Room not found"}`, http.StatusNotFound)
 		return
@@ -414,6 +520,9 @@ func (h *RoomHandler) GetRoomDetail(w http.ResponseWriter, r *http.Request) {
 func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
+		return
+	}
+	if !requireActive(w, userID) {
 		return
 	}
 
@@ -447,6 +556,13 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	joinRoomAs(w, room, userID)
+}
+
+// joinRoomAs makes userID a member of room and answers with its Room Detail.
+// Joining by code and joining an open room share it, so the creator's
+// notification and the response are the same for both.
+func joinRoomAs(w http.ResponseWriter, room models.Room, userID string) {
 	already, err := isRoomMember(room.ID, userID)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to join room"}`, http.StatusInternalServerError)
@@ -479,7 +595,7 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	// into an error: a retry would only be told "already in this room". Fall
 	// back to the bare room, which is what this endpoint used to return.
 	var payload interface{} = room
-	if detail, err := loadRoomDetail(room.ID); err == nil {
+	if detail, err := loadRoomDetail(room.ID, userID); err == nil {
 		payload = detail
 	} else {
 		log.Printf("JoinRoom: joined %s but failed to load its detail: %v", room.ID, err)
@@ -490,6 +606,98 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(payload)
 }
 
+// JoinOpenRoom joins a room without a code, which only an open room allows.
+// The preview the reader joined from can be stale: the creator may have made
+// the room invite-only or deleted it since, and the app says which.
+func (h *RoomHandler) JoinOpenRoom(w http.ResponseWriter, r *http.Request) {
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	if !ok {
+		return
+	}
+	if !requireActive(w, userID) {
+		return
+	}
+
+	var room models.Room
+	err := database.DB.QueryRow(
+		`SELECT id, name, description, invite_code, is_private, admin_id, created_at, updated_at
+		   FROM rooms WHERE id = $1`,
+		mux.Vars(r)["id"],
+	).Scan(&room.ID, &room.Name, &room.Description, &room.InviteCode, &room.IsPrivate,
+		&room.AdminID, &room.CreatedAt, &room.UpdatedAt)
+	if err == sql.ErrNoRows {
+		http.Error(w, `{"error": "Room not found"}`, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, `{"error": "Failed to join room"}`, http.StatusInternalServerError)
+		return
+	}
+	// A member is told so even if the room has closed since, so the app
+	// opens the room rather than saying it's invite-only.
+	if room.IsPrivate {
+		if member, err := isRoomMember(room.ID, userID); err == nil && member {
+			http.Error(w, `{"error": "You're already in this room"}`, http.StatusConflict)
+			return
+		}
+		http.Error(w, `{"error": "This room is invite-only"}`, http.StatusForbidden)
+		return
+	}
+
+	joinRoomAs(w, room, userID)
+}
+
+// UpdateRoom — PATCH /room/{id}
+// Body: {"is_private": true|false}
+// Only the creator may change who can join. Closing a room keeps everyone
+// already in it and its invite code; it just leaves the open-rooms lists.
+// Fields left out stay as they are, so name and description can join later.
+func (h *RoomHandler) UpdateRoom(w http.ResponseWriter, r *http.Request) {
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	if !ok {
+		return
+	}
+	if !requireActive(w, userID) {
+		return
+	}
+	roomID := mux.Vars(r)["id"]
+
+	var req struct {
+		IsPrivate *bool `json:"is_private"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	var adminID string
+	err := database.DB.QueryRow(`SELECT admin_id FROM rooms WHERE id = $1`, roomID).Scan(&adminID)
+	if err == sql.ErrNoRows {
+		http.Error(w, `{"error": "Room not found"}`, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, `{"error": "Failed to update room"}`, http.StatusInternalServerError)
+		return
+	}
+	if adminID != userID {
+		http.Error(w, `{"error": "Only the room creator can change this room"}`, http.StatusForbidden)
+		return
+	}
+
+	if req.IsPrivate != nil {
+		if _, err := database.DB.Exec(
+			`UPDATE rooms SET is_private = $1, updated_at = $2 WHERE id = $3`,
+			*req.IsPrivate, time.Now().UTC(), roomID,
+		); err != nil {
+			http.Error(w, `{"error": "Failed to update room"}`, http.StatusInternalServerError)
+			return
+		}
+	}
+
+	h.GetRoomDetail(w, r)
+}
+
 // SetRoomReading — PATCH /room/{id}/reading
 // Body: {"current_book_id": "...", "bucket_id": "...", "bucket_type": "user"|"curated"}
 // Sending a bucket without a book, or neither, clears that side. The room's
@@ -497,6 +705,9 @@ func (h *RoomHandler) JoinRoom(w http.ResponseWriter, r *http.Request) {
 func (h *RoomHandler) SetRoomReading(w http.ResponseWriter, r *http.Request) {
 	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
+		return
+	}
+	if !requireActive(w, userID) {
 		return
 	}
 	roomID := mux.Vars(r)["id"]

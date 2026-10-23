@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Routes, Route, NavLink, Navigate, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { BookIcon, HomeIcon, UploadIcon, MenuIcon, SparklesIcon, FolderIcon, DatabaseIcon, UsersIcon } from './components/icons';
+import { BookIcon, HomeIcon, UploadIcon, MenuIcon, SparklesIcon, FolderIcon, DatabaseIcon, UsersIcon, FlagIcon } from './components/icons';
 import { IconButton } from './components/ui';
 import LoginPage from './pages/loginPage';
 import DashboardPage from './pages/dashboardPage';
@@ -14,8 +14,10 @@ import OurPicksPage from './pages/ourPicksPage';
 import DatabasePage from './pages/databasePage';
 import UsersPage from './pages/usersPage';
 import UserDetailPage from './pages/userDetailPage';
+import ReportsPage from './pages/reportsPage';
 import { endSession, hasSession } from './utils/session';
 import { setUnauthorizedHandler } from './services/api';
+import { useOpenReportCount } from './services/moderation';
 
 const NAV = [
   { to: '/dashboard', label: 'Dashboard', Icon: HomeIcon },
@@ -24,6 +26,7 @@ const NAV = [
   { to: '/my-buckets', label: 'Buckets', Icon: FolderIcon },
   { to: '/upload', label: 'Upload book', Icon: UploadIcon },
   { to: '/bulk-upload', label: 'Bulk upload', Icon: FolderIcon },
+  { to: '/reports', label: 'Reports', Icon: FlagIcon, badge: 'reports' },
   { to: '/users', label: 'Users', Icon: UsersIcon },
   { to: '/database', label: 'Database', Icon: DatabaseIcon },
 ];
@@ -35,6 +38,8 @@ const initials = (name = '') => name.trim().slice(0, 2).toUpperCase() || 'AD';
 const Sidebar = ({ onNavigate, onLogout }) => {
   const username = localStorage.getItem('username') ?? '';
   const avatar = localStorage.getItem('avatar');
+  const { data: openReports } = useOpenReportCount();
+  const badges = { reports: openReports };
   return (
     <div className="w-60 h-full bg-well flex flex-col px-3.5 py-5 gap-6 box-border">
       <div className="flex items-center gap-2.5 px-2">
@@ -57,6 +62,11 @@ const Sidebar = ({ onNavigate, onLogout }) => {
               <>
                 <item.Icon width={20} height={20} className={isActive ? 'text-link' : ''} />
                 {item.label}
+                {badges[item.badge] > 0 && (
+                  <span className="ml-auto min-w-5 h-5 px-1.5 rounded-full bg-gold text-on-gold text-[11px] font-extrabold flex items-center justify-center" aria-label={`${badges[item.badge]} open`}>
+                    {badges[item.badge]}
+                  </span>
+                )}
               </>
             )}
           </NavLink>
@@ -147,6 +157,7 @@ export default function App() {
         <Route path="/my-buckets" element={<MyBucketsPage />} />
         <Route path="/upload" element={<UploadBookPage />} />
         <Route path="/bulk-upload" element={<BulkUploadPage />} />
+        <Route path="/reports" element={<ReportsPage />} />
         <Route path="/users" element={<UsersPage />} />
         <Route path="/users/:uuid" element={<UserDetailPage />} />
         <Route path="/database" element={<DatabasePage />} />

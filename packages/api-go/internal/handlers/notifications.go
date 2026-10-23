@@ -77,6 +77,11 @@ func (h *NotificationHandler) GetUnreadNotificationCount(w http.ResponseWriter, 
 	if !ok {
 		return
 	}
+	// The app asks for this every time it comes back to the foreground, so
+	// it's where a suspended reader finds out (report-block R10.1).
+	if !requireActive(w, userID) {
+		return
+	}
 
 	var count int
 	err := database.DB.QueryRow(

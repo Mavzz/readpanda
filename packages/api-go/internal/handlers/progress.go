@@ -130,6 +130,8 @@ func (h *ProgressHandler) PutMyProgress(w http.ResponseWriter, r *http.Request) 
 			`SELECT COUNT(*) FROM book_comments c
 			   JOIN book_comments root ON root.id = COALESCE(c.parent_id, c.id)
 			  WHERE c.book_id = $2 AND c.user_id <> $1
+			    AND c.deleted_at IS NULL
+			    AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $1 AND b.blocked_id IN (c.user_id, root.user_id))
 			    AND root.page > $3 AND root.page <= $4
 			    AND root.user_id <> $1
 			    AND c.room_id IN (
