@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/lib/pq"
 
 	"github.com/Mavzz/readpanda/api-go/internal/database"
@@ -30,6 +31,9 @@ type Notification struct {
 	// Only carried in the push, so a tap can open the room before the app has
 	// loaded its rooms. The inbox row has the room id.
 	RoomName string
+	// Whose action this is (the replier, the joiner), if anyone's. Recipients
+	// who have blocked them aren't told (report-block R5.5).
+	ActorID string
 }
 
 // broadcastTimeout bounds the NEW_BOOK fan-out, which runs after the upload
@@ -57,10 +61,17 @@ func Send(userIDs []string, n Notification) error {
 	if len(userIDs) == 0 {
 		return nil
 	}
+	notBlocking := ""
+	if n.ActorID != "" {
+		if _, err := uuid.Parse(n.ActorID); err != nil {
+			return fmt.Errorf("actor %q: %w", n.ActorID, err)
+		}
+		notBlocking = ` AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = u AND b.blocked_id = '` + n.ActorID + `')`
+	}
 	byUser, err := insert(
 		`INSERT INTO notifications (user_id, type, title, message, book_id, room_id)
 		 SELECT DISTINCT u, $2, $3, $4, $5, $6 FROM unnest($1::uuid[]) AS u
-		 WHERE `+switchedOn(typeOrSystem(n.Type), "u")+`
+		 WHERE `+switchedOn(typeOrSystem(n.Type), "u")+notBlocking+`
 		 RETURNING id, user_id`,
 		pq.Array(userIDs), n,
 	)

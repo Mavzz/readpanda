@@ -16,6 +16,7 @@ import (
 	"github.com/Mavzz/readpanda/api-go/internal/config"
 	"github.com/Mavzz/readpanda/api-go/internal/database"
 	"github.com/Mavzz/readpanda/api-go/internal/models"
+	"github.com/Mavzz/readpanda/api-go/internal/moderation"
 	"github.com/Mavzz/readpanda/api-go/internal/utils"
 	"golang.org/x/text/unicode/norm"
 	"google.golang.org/api/idtoken"
@@ -155,6 +156,9 @@ func (h *UserHandler) UsernameAvailable(w http.ResponseWriter, r *http.Request) 
 		fieldError(w, http.StatusBadRequest, "username", "Use 3–20 letters, numbers, dots or underscores.")
 		return
 	}
+	if refusedWords(w, "username", name) {
+		return
+	}
 	taken, err := usernameTaken(name)
 	if err != nil {
 		http.Error(w, `{"error": "Couldn't check that name"}`, http.StatusInternalServerError)
@@ -261,6 +265,9 @@ func (h *UserHandler) AppleAuth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err == nil {
+		if !requireActive(w, user.UUID) {
+			return
+		}
 		accessToken, refreshToken, err := utils.GenerateTokens(user.UUID, user.Role, h.Config.JWTSecret, h.Config.JWTRefreshSecret)
 		if err != nil {
 			http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
@@ -294,7 +301,9 @@ func (h *UserHandler) AppleAuth(w http.ResponseWriter, r *http.Request) {
 	if source == "" && !identity.PrivateEmail {
 		source = strings.SplitN(email, "@", 2)[0]
 	}
-	if source == "" {
+	// The reader doesn't pick this name, so a listed word in it just falls
+	// back to the plain one (report-block R8.1).
+	if source == "" || moderation.Check(source) != nil {
 		source = "reader"
 	}
 	username := usernameFrom(source)
@@ -376,6 +385,9 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if field, message := validateSignup(&req); field != "" {
 		fieldError(w, http.StatusBadRequest, field, message)
+		return
+	}
+	if refusedWords(w, "username", req.Username) {
 		return
 	}
 
@@ -499,6 +511,9 @@ func (h *UserHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error": "Invalid username or password"}`, http.StatusUnauthorized)
 		return
 	}
+	if !requireActive(w, user.UUID) {
+		return
+	}
 
 	// Generate tokens
 	accessToken, refreshToken, err := utils.GenerateTokens(user.UUID, user.Role, h.Config.JWTSecret, h.Config.JWTRefreshSecret)
@@ -584,6 +599,9 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 		Scan(&user.Email, &user.Username, &user.UUID, &user.Role)
 
 	if err == nil {
+		if !requireActive(w, user.UUID) {
+			return
+		}
 		// User exists, generate tokens
 		accessToken, refreshToken, err := utils.GenerateTokens(user.UUID, user.Role, h.Config.JWTSecret, h.Config.JWTRefreshSecret)
 		if err != nil {
@@ -626,6 +644,11 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 	// name+random suffix on collision (same retry-on-conflict shape used for
 	// room invite codes).
 	username := name
+	// The reader doesn't pick this name, so a listed word in it just falls
+	// back to a plain one (report-block R8.1).
+	if moderation.Check(username) != nil {
+		username = "reader"
+	}
 	for attempt := 0; ; attempt++ {
 		err = tx.QueryRow(
 			"INSERT INTO users (username, email, isactive, login_type, uuid, google_sub) VALUES ($1, $2, $3, $4, $5, $6) RETURNING username",
@@ -727,6 +750,10 @@ func (h *UserHandler) RefreshAccessToken(w http.ResponseWriter, r *http.Request)
 	var role string
 	if err := database.DB.QueryRow("SELECT role FROM users WHERE uuid = $1", claims.UserID).Scan(&role); err != nil {
 		http.Error(w, `{"error": "User not found"}`, http.StatusUnauthorized)
+		return
+	}
+	// Suspended since signing in: the app signs out on this (report-block R10.2).
+	if !requireActive(w, claims.UserID) {
 		return
 	}
 
@@ -971,6 +998,13 @@ func deleteAccount(userID string) (string, error) {
 	if _, err := tx.Exec(`DELETE FROM reading_progress WHERE user_id = $1`, userID); err != nil {
 		return "", fmt.Errorf("reading progress: %w", err)
 	}
+	// Blocks they made and blocks on them (report-block). The keys cascade
+	// too; this keeps it in the list of what deletion clears.
+	if _, err := tx.Exec(`DELETE FROM user_blocks WHERE blocker_id = $1 OR blocked_id = $1`, userID); err != nil {
+		return "", fmt.Errorf("blocks: %w", err)
+	}
+	// Reports they made stay, with no reporter (report-block R3.3), through
+	// the ON DELETE SET NULL keys.
 	// Everything else of theirs cascades: tokens, devices, notifications,
 	// preferences, buckets, highlights, likes, reads, memberships (R4.1).
 	if _, err := tx.Exec(`DELETE FROM users WHERE uuid = $1`, userID); err != nil {

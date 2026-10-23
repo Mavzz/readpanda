@@ -85,7 +85,8 @@ func (a *api) exec(query string, args ...any) {
 
 // do sends a request through the router. body is JSON-encoded unless nil;
 // as is the caller (nil for an anonymous request). The response body is
-// decoded into out when out is non-nil and the call succeeded.
+// decoded into out when out is non-nil: always on success, and on a failure
+// when it's JSON (some errors are plain text).
 func (a *api) do(method, path string, as *user, body any, out any) int {
 	a.t.Helper()
 	var buf bytes.Buffer
@@ -106,6 +107,8 @@ func (a *api) do(method, path string, as *user, body any, out any) int {
 		if err := json.Unmarshal(w.Body.Bytes(), out); err != nil {
 			a.t.Fatalf("%s %s: decoding %q: %v", method, path, w.Body.String(), err)
 		}
+	} else if out != nil {
+		_ = json.Unmarshal(w.Body.Bytes(), out)
 	}
 	return w.Code
 }

@@ -123,17 +123,29 @@ func (h *CommentHandler) GetBookComments(w http.ResponseWriter, r *http.Request)
 	                  WHERE room_id = $1 AND book_id = $2 AND parent_id IS NULL
 	                    AND (page <= $4 OR user_id = $3)`
 
+	// Someone the reader has blocked is left out of everything here: their
+	// threads with all the replies, their replies in other threads, and both
+	// counts (report-block R5.3). blockedBy is that test for one author column.
+	blockedBy := func(col string) string {
+		return `EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $3 AND b.blocked_id = ` + col + `)`
+	}
+	shownRoots := visibleRoots + ` AND NOT ` + blockedBy("user_id")
+
 	rows, err := database.DB.Query(
 		`SELECT c.id, c.user_id, u.username, c.page, COALESCE(c.anchor_text, ''),
 		        c.anchor_bounds, c.anchor_key, COALESCE(c.file_hash, ''), c.body,
 		        COALESCE(c.parent_id, ''), c.created_at,
 		        (SELECT COUNT(*) FROM book_comment_likes l WHERE l.comment_id = c.id),
 		        EXISTS (SELECT 1 FROM book_comment_likes l WHERE l.comment_id = c.id AND l.user_id = $3),
-		        EXISTS (SELECT 1 FROM book_comment_reads rd WHERE rd.comment_id = c.id AND rd.user_id = $3)
+		        EXISTS (SELECT 1 FROM book_comment_reads rd WHERE rd.comment_id = c.id AND rd.user_id = $3),
+		        COALESCE(c.deleted_by, ''),
+		        EXISTS (SELECT 1 FROM content_reports cr
+		                 WHERE cr.reporter_id = $3 AND cr.target_type = 'comment' AND cr.target_id = c.id)
 		   FROM book_comments c
 		   JOIN users u ON u.uuid = c.user_id
 		  WHERE c.room_id = $1 AND c.book_id = $2
-		    AND (c.id IN (`+visibleRoots+`) OR c.parent_id IN (`+visibleRoots+`))
+		    AND (c.id IN (`+shownRoots+`) OR c.parent_id IN (`+shownRoots+`))
+		    AND NOT `+blockedBy("c.user_id")+`
 		  ORDER BY c.page, c.created_at`,
 		roomID, bookID, userID, furthest,
 	)
@@ -156,9 +168,11 @@ func (h *CommentHandler) GetBookComments(w http.ResponseWriter, r *http.Request)
 		var c models.BookComment
 		var bounds []byte
 		var anchorText, anchorKeyValue, fileHash string
+		var reported bool
 		if err := rows.Scan(
 			&c.ID, &c.UserID, &c.Username, &c.Page, &anchorText, &bounds, &anchorKeyValue,
 			&fileHash, &c.Body, &c.ParentID, &c.CreatedAt, &c.Likes, &c.LikedByMe, &c.Read,
+			&c.Deleted, &reported,
 		); err != nil {
 			http.Error(w, `{"error": "Failed to scan comments"}`, http.StatusInternalServerError)
 			return
@@ -170,6 +184,23 @@ func (h *CommentHandler) GetBookComments(w http.ResponseWriter, r *http.Request)
 			c.Anchor.Bounds = json.RawMessage(bounds)
 		}
 		c.Replies = []models.BookComment{}
+		// A deleted comment kept for its replies: where it was, and nothing
+		// of who wrote it or what it said (report-block R7.4). Never unread.
+		// Something this reader reported is gone for them (report-block R1.4):
+		// a reply entirely, a thread's first comment down to a placeholder
+		// for the replies, like a deleted one.
+		if reported {
+			if c.ParentID != "" {
+				continue
+			}
+			if c.Deleted == "" {
+				c.Hidden = "reported"
+			}
+		}
+		if c.Deleted != "" || c.Hidden != "" {
+			c.UserID, c.Username, c.Body = "", "", ""
+			c.Likes, c.LikedByMe, c.Read = 0, false, true
+		}
 
 		if c.ParentID == "" {
 			roots = append(roots, c)
@@ -190,6 +221,12 @@ func (h *CommentHandler) GetBookComments(w http.ResponseWriter, r *http.Request)
 		root.Replies = repliesByParent[root.ID]
 		if root.Replies == nil {
 			root.Replies = []models.BookComment{}
+		}
+		// A placeholder is only there for its replies. Deleting the last reply
+		// removes a deleted one; this also covers one whose replies this
+		// reader doesn't get, and a reported one with none.
+		if (root.Deleted != "" || root.Hidden != "") && len(root.Replies) == 0 {
+			continue
 		}
 
 		idx, seen := threadIndex[root.Anchor.Key]
@@ -227,8 +264,11 @@ func (h *CommentHandler) GetBookComments(w http.ResponseWriter, r *http.Request)
 	// even though its own row carries no page of its own worth reading.
 	if err := database.DB.QueryRow(
 		`SELECT COUNT(*) FROM book_comments c
+		   JOIN book_comments root ON root.id = COALESCE(c.parent_id, c.id)
 		  WHERE c.room_id = $1 AND c.book_id = $2 AND c.user_id <> $3
-		    AND COALESCE(c.parent_id, c.id) NOT IN (`+visibleRoots+`)`,
+		    AND c.deleted_at IS NULL
+		    AND NOT `+blockedBy("c.user_id")+` AND NOT `+blockedBy("root.user_id")+`
+		    AND root.id NOT IN (`+visibleRoots+`)`,
 		roomID, bookID, userID, furthest,
 	).Scan(&resp.LockedCount); err != nil {
 		http.Error(w, `{"error": "Failed to get comments"}`, http.StatusInternalServerError)
@@ -250,6 +290,9 @@ func (h *CommentHandler) GetBookComments(w http.ResponseWriter, r *http.Request)
 func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
 	if !ok {
+		return
+	}
+	if !requireActive(w, userID) {
 		return
 	}
 	roomID := mux.Vars(r)["id"]
@@ -276,6 +319,9 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	body := strings.TrimSpace(req.Body)
 	if body == "" || len(body) > maxCommentBody {
 		http.Error(w, `{"error": "Comment must be 1-2000 characters"}`, http.StatusBadRequest)
+		return
+	}
+	if refusedWords(w, "body", body) {
 		return
 	}
 	if req.Page < 0 {
@@ -314,7 +360,7 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		var rootHash sql.NullString
 		err := database.DB.QueryRow(
 			`SELECT parent_id, room_id, page, anchor_text, anchor_bounds, file_hash, user_id
-			   FROM book_comments WHERE id = $1 AND book_id = $2`,
+			   FROM book_comments WHERE id = $1 AND book_id = $2 AND deleted_at IS NULL`,
 			req.ParentID, bookID,
 		).Scan(&parentOfParent, &rootRoom, &page, &rootAnchor, &rootBounds, &rootHash, &parentAuthor)
 		if err == sql.ErrNoRows {
@@ -460,6 +506,7 @@ func (h *CommentHandler) notifyComment(roomID, bookID, authorID string, c models
 		go func() {
 			defer wg.Done()
 			if err := notify.Send([]string{parentAuthor}, notify.Notification{
+				ActorID:  authorID,
 				Type:     models.NotificationTypeReply,
 				Title:    authorName + " replied",
 				Message:  notify.Snippet(c.Body),
@@ -574,7 +621,7 @@ func (h *CommentHandler) setLike(w http.ResponseWriter, r *http.Request, liked b
 	}
 
 	var roomID string
-	err := database.DB.QueryRow(`SELECT room_id FROM book_comments WHERE id = $1`, commentID).Scan(&roomID)
+	err := database.DB.QueryRow(`SELECT room_id FROM book_comments WHERE id = $1 AND deleted_at IS NULL`, commentID).Scan(&roomID)
 	if err == sql.ErrNoRows {
 		http.Error(w, `{"error": "Comment not found"}`, http.StatusNotFound)
 		return
@@ -612,4 +659,91 @@ func (h *CommentHandler) setLike(w http.ResponseWriter, r *http.Request, liked b
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// DeleteComment — DELETE /comments/{commentId} (report-block R7).
+//
+// The author's own delete. A comment with replies stays as a "Comment
+// deleted" placeholder so the replies keep their thread; one without goes.
+func (h *CommentHandler) DeleteComment(w http.ResponseWriter, r *http.Request) {
+	userID, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret)
+	if !ok {
+		return
+	}
+	commentID := mux.Vars(r)["commentId"]
+
+	tx, err := database.DB.Begin()
+	if err != nil {
+		http.Error(w, `{"error": "Failed to delete comment"}`, http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	var authorID string
+	var parentID sql.NullString
+	err = tx.QueryRow(
+		`SELECT user_id, parent_id FROM book_comments WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+		commentID,
+	).Scan(&authorID, &parentID)
+	if err == sql.ErrNoRows {
+		http.Error(w, `{"error": "Comment not found"}`, http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, `{"error": "Failed to delete comment"}`, http.StatusInternalServerError)
+		return
+	}
+	if authorID != userID {
+		http.Error(w, `{"error": "You can only delete your own comments"}`, http.StatusForbidden)
+		return
+	}
+	if err := removeComment(tx, commentID, parentID.String, "author"); err != nil {
+		log.Printf("comments: deleting %s: %v", commentID, err)
+		http.Error(w, `{"error": "Failed to delete comment"}`, http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		http.Error(w, `{"error": "Failed to delete comment"}`, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// removeComment deletes a comment for its author or a moderator (by).
+// With replies, it empties the body and marks it deleted, dropping its likes
+// and reads; the anchor stays, being the book's words. Without, the row
+// goes, and so does a placeholder it was the last reply under.
+func removeComment(tx *sql.Tx, commentID, parentID, by string) error {
+	var hasReplies bool
+	if err := tx.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM book_comments WHERE parent_id = $1)`, commentID,
+	).Scan(&hasReplies); err != nil {
+		return err
+	}
+	if hasReplies {
+		if _, err := tx.Exec(
+			`UPDATE book_comments SET body = '', deleted_at = now(), deleted_by = $2, updated_at = now()
+			  WHERE id = $1`, commentID, by,
+		); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`DELETE FROM book_comment_likes WHERE comment_id = $1`, commentID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`DELETE FROM book_comment_reads WHERE comment_id = $1`, commentID)
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM book_comments WHERE id = $1`, commentID); err != nil {
+		return err
+	}
+	if parentID == "" {
+		return nil
+	}
+	_, err := tx.Exec(
+		`DELETE FROM book_comments p
+		  WHERE p.id = $1 AND p.deleted_at IS NOT NULL
+		    AND NOT EXISTS (SELECT 1 FROM book_comments c WHERE c.parent_id = p.id)`,
+		parentID,
+	)
+	return err
 }

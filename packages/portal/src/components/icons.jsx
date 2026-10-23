@@ -71,7 +71,14 @@ const SearchIcon = (props) => (
   </svg>
 );
 
+const FlagIcon = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <path d="M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 8 2a6 6 0 0 0 4-1.5V15a6 6 0 0 1-4 1.5c-3 0-5-2-8-2a6 6 0 0 0-4 1.5"></path>
+  </svg>
+);
+
 export {
+  FlagIcon,
   CloseIcon,
   PlusIcon,
   SearchIcon,

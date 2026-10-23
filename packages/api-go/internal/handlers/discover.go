@@ -49,9 +49,13 @@ const friendsCTE = `
 		SELECT room_id FROM room_members WHERE user_id = $1
 	),
 	friends AS (
-		SELECT m.user_id FROM room_members m JOIN my_rooms r ON r.room_id = m.room_id
-		UNION
-		SELECT rm.admin_id FROM rooms rm JOIN my_rooms r ON r.room_id = rm.id
+		SELECT f.user_id FROM (
+			SELECT m.user_id FROM room_members m JOIN my_rooms r ON r.room_id = m.room_id
+			UNION
+			SELECT rm.admin_id FROM rooms rm JOIN my_rooms r ON r.room_id = rm.id
+		) f
+		-- Nobody the reader has blocked (report-block R5).
+		WHERE NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $1 AND b.blocked_id = f.user_id)
 	)`
 
 // likedSubgenres reads the subgenres the reader picked in Settings › Genres I
