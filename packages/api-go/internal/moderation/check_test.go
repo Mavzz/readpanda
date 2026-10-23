@@ -14,6 +14,13 @@ func TestCheck(t *testing.T) {
 		"blow   job",         // however they're spaced
 		"some_kike_name",     // usernames split on _ and .
 		"mira.faggot",
+		"kya chutiya hai", // romanized Hindi
+		"BHENCHOD",        // in capitals
+		"तू चूतिया है",    // Devanagari, vowel signs kept in the word
+		"भोसड़ीके",        // with the nukta precomposed…
+		"भोसड\u093cीके",   // …or typed as two characters
+		"లం\u200cజ",       // a zero-width non-joiner inside the word doesn't hide it
+		"sule maga",       // an entry of two words, romanized
 	}
 	for _, text := range refused {
 		if Check(text) == nil {
@@ -30,6 +37,15 @@ func TestCheck(t *testing.T) {
 		"page 15 of 400",  // digits on their own aren't words on the list
 		"mira.anand",
 		"Retardant on the forest fire",
+		"chhoot milegi on this edition", // "discount", romanized
+		"Sulla crossed the Rubicon",     // people and places stay off
+		"Niki Lauda", "ABO blood group",
+		"chhakka on the last ball",        // a six, in cricket
+		"रडार पर कुछ नहीं",                // shares letters with a listed word, not the word
+		"चमारी गाँव की कहानी",             // a listed word inside a longer one
+		"मैं यह किताब पढ़ रहा हूँ",        // an ordinary sentence
+		"ఈ పుస్తకం చాలా బాగుంది",          // Telugu: "this book is very good"
+		"இந்த புத்தகம் நன்றாக இருக்கிறது", // Tamil: the same
 	}
 	for _, text := range allowed {
 		if err := Check(text); err != nil {

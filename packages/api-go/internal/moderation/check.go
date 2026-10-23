@@ -60,19 +60,33 @@ func Check(text string) error {
 	return nil
 }
 
+// Scripts where a combining mark is an accent to ignore. In Devanagari,
+// Telugu, Tamil and the rest, marks are vowel signs and viramas: part of the
+// word, and dropping them would turn different words into one.
+var accented = []*unicode.RangeTable{unicode.Latin, unicode.Greek, unicode.Cyrillic}
+
 // words lowercases text, drops accents ("é" → "e"), folds look-alikes, and
-// splits it on anything that isn't a letter or digit.
+// splits it on anything that isn't a letter, a mark or a digit. Zero-width
+// joiners go, since Indic text is typed both with and without them.
 func words(text string) []string {
 	var b strings.Builder
+	accentable := false
 	for _, r := range norm.NFKD.String(strings.ToLower(text)) {
-		if unicode.Is(unicode.Mn, r) {
+		switch {
+		case r == '\u200c' || r == '\u200d':
 			continue
+		case unicode.Is(unicode.Mn, r):
+			if accentable {
+				continue
+			}
+		case unicode.IsLetter(r):
+			accentable = unicode.In(r, accented...)
 		}
 		b.WriteRune(r)
 	}
 	folded := lookAlikes.Replace(b.String())
 	return strings.FieldsFunc(folded, func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+		return !unicode.IsLetter(r) && !unicode.IsMark(r) && !unicode.IsDigit(r)
 	})
 }
 
