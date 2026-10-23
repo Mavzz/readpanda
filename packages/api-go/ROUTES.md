@@ -22,6 +22,10 @@ Authorization: Bearer <access_token>
 | POST | `/auth/logout` | Yes | Logout the current user. |
 | POST | `/token/refresh` | No | Refresh an expired access token. Body: `{ refresh_token }`. Returns a new access token. |
 
+**Blocked words.** A username, room name or description, or comment containing a word on the list in `internal/moderation/wordlist.go` is refused with `400 { error: "That includes words we don't allow.", code: "blocked_words", field }`. Matching is on whole words, ignoring case, accents and look-alike characters ("Scunthorpe" passes). Apple and Google sign-up, which make the username from the reader's name, fall back to `reader` instead of refusing.
+
+**Suspended accounts** (`users.isactive = false`) get `403 { error, code: "account_suspended" }` from `/auth/login` (after the password check), `/auth/apple`, `/auth/google` and `/token/refresh`, from posting comments, creating, joining or changing rooms, `/reports`, and the block routes, and from the two reads the app refreshes with, `/notifications/unread/count` and `/room/my-rooms`. Other reads keep working until the access token expires; the app signs out on whichever refusal comes first.
+
 ---
 
 ## Users
@@ -29,7 +33,10 @@ Authorization: Bearer <access_token>
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
 | GET | `/users` | Admin | List all users (admin role required; `401` without a token, `403` for non-admins). Returns `[ { username, email, isactive, login_type, uuid, created_at } ]`. |
-| DELETE | `/users/me` | Yes | Delete the caller's account for good, in one transaction. Rooms they created pass to the earliest-joined member (who becomes admin), or are deleted if nobody else is in them; their comments stay, moved to the reserved "Deleted reader" account (`deleted.reader`, id `00000000-…`; see `scripts/migrate_account_deletion.sql`), so replies survive; books they uploaded stay with no uploader. Everything else of theirs (progress, buckets, highlights, tokens, devices, notifications, memberships) is deleted. Then, if they signed in with Apple, revokes Apple's token (best effort; logged on failure). `204`, also when the account is already gone. |
+| GET | `/users/me/blocks` | Yes | Readers the caller has blocked, newest first: `[ { user_id, username, blocked_at } ]`. |
+| POST | `/users/me/blocks` | Yes | Block a reader. Body: `{ user_id }`. `204`, also when already blocked. `400` for yourself or the Deleted reader, `404` for an unknown reader. They aren't told. See **Blocks** under Comments for what it hides. |
+| DELETE | `/users/me/blocks/{userId}` | Yes | Unblock. `204` whether or not they were blocked. |
+| DELETE | `/users/me` | Yes | Delete the caller's account for good, in one transaction. Rooms they created pass to the earliest-joined member (who becomes admin), or are deleted if nobody else is in them; their comments stay, moved to the reserved "Deleted reader" account (`deleted.reader`, id `00000000-…`; see `scripts/migrate_account_deletion.sql`), so replies survive; books they uploaded stay with no uploader. Everything else of theirs (progress, buckets, highlights, tokens, devices, notifications, memberships, blocks either way) is deleted. Reports they made stay, without a reporter. Then, if they signed in with Apple, revokes Apple's token (best effort; logged on failure). `204`, also when the account is already gone. |
 
 ---
 
@@ -89,12 +96,13 @@ Every route here acts on the caller, taken from the access token. The old `?user
 
 ### Where notifications come from
 
-`internal/notify` writes the inbox row, then pushes to the recipient's registered devices with the default iOS sound. The row is the record: if push is unconfigured or a send fails, the notification is still in the inbox. Tokens that FCM reports as unregistered are deleted. Readers who switched a kind off (`/users/me/notification-settings`) get neither the row nor the push.
+`internal/notify` writes the inbox row, then pushes to the recipient's registered devices with the default iOS sound. The row is the record: if push is unconfigured or a send fails, the notification is still in the inbox. Tokens that FCM reports as unregistered are deleted. Readers who switched a kind off (`/users/me/notification-settings`) get neither the row nor the push, and nobody hears about a reply, comment or join by a reader they've blocked.
 
 `notify.Send`, for room events, pushes before the triggering request answers, giving up after 5 seconds: Cloud Run throttles CPU once a response is sent. The `NEW_BOOK` broadcast (`notify.ToAllUsersExcept`) still pushes in the background after the upload answers.
 
 | Trigger | Recipients | Notification |
 |---------|------------|--------------|
+| `POST /reports` (a new report, not a repeat) | Every account with the `admin` role | `SYSTEM`, "New report", "{reason} · comment in {room} \| reader {username} \| room {room}". Never the reported text. The report is saved even if this fails. |
 | `POST /books/upload` with a manuscript | Every user except the publisher, and anyone with New books off | `NEW_BOOK`, "New book added", `book_id` set |
 | `POST /room/{id}/book/{bookId}/comments` with `parent_id` | The thread's author, if it isn't the replier, they're still a member, and Replies is on | `REPLY`, "{username} replied", the reply cut to 120 characters; `room_id`, `book_id` set |
 | `PATCH /room/{id}/reading` to a different, non-null book | Every member except the creator, if Room picks a book is on | `ROOM_BOOK`, title the room name, "Now reading {Book title}"; `room_id`, `book_id` set. Clearing the book, or sending the one it already has, notifies nobody. |
@@ -151,6 +159,14 @@ Generic view over every table in the `public` schema, used by the portal's Users
 | POST | `/admin/tables/{table}/rows` | Yes | (Admin) Insert a row. Body: `{ "<column>": value }`; omitted columns get their default. Returns the inserted row. |
 | DELETE | `/admin/tables/{table}/rows` | Yes | (Admin) Delete one row by primary key. Body: `{ "key": { "<pk column>": value } }`. |
 | GET | `/admin/users/{uuid}` | Yes | (Admin) A user plus their rows in every table with a foreign key to `users` (first 100 per table). |
+| PATCH | `/admin/users/{uuid}` | Yes | (Admin) Suspend or reinstate. Body: `{ isactive }`. Suspending deletes their refresh tokens, so the app signs out at its next refresh. `400` for the admin themselves or the Deleted reader; `404` unknown user. |
+
+### Moderation (Admin)
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| GET | `/admin/reports?status=open&limit=&offset=` | Yes | (Admin) Reports, newest first. `status` is `open` (default), `actioned`, `dismissed` or `all`; `limit` ≤ 100, default 50. Returns `{ reports[], has_more, open_count }`. Each report: `{ id, target_type, target_id, reason, details, snapshot, status, action, created_at, resolved_at, resolved_by, reporter, target_user, room, comment_state }`. `reporter` and `target_user` are `{ id, username, suspended }`, or null once the account is deleted; `room` is `{ id, name, state }` with `state` `open`, `invite_only` or `gone`; `comment_state` is `live`, `deleted`, `removed` or `gone`. |
+| POST | `/admin/reports/{id}/resolve` | Yes | (Admin) Act on a report. Body: `{ action }`: `remove_comment` (comment reports; shows as removed by ReadPanda, replies kept), `close_room` or `delete_room` (room reports), `suspend_user` (any report about someone), or `dismiss`. Closes this report and every other open one on the same target, recording the action, the admin and the time. Then tells the people it affects with a `SYSTEM` notification giving the report's reason, never the reporter: the comment's author for `remove_comment` (unless they'd already deleted it), the creator for `close_room` (if the room was open) and `delete_room`, and a deleted room's other members ("A room was removed", no reason). Returns `{ status, action, closed }`. `400` for an action that doesn't fit; `404` unknown report; `409` already closed. |
 
 ---
 
@@ -161,9 +177,9 @@ Generic view over every table in the `public` schema, used by the portal's Users
 | POST | `/room/create` | Yes | Create a room. Body: `{ name, description, is_private }`. `is_private` defaults to `true` (Invite only) when left out. Every room gets an invite code, and the creator is enrolled as an `admin` member. |
 | GET | `/room/my-rooms` | Yes | Rooms the user created or joined. Returns a bare array. |
 | POST | `/room/join` | Yes | Join a room by code. Body: `{ invite_code }`. `404` unknown code, `409` already a member. |
-| GET | `/room/open?book_id=&limit=&offset=` | Yes | Open rooms (`is_private = false`) the caller didn't make and isn't in, optionally only those reading `book_id`. Rooms reading a book first, then more members, then newer. `limit` defaults to 20, at most 50. Returns `{ rooms: [{ id, name, description, current_book: { book_id, title, cover_image_url } \| null, member_count, creator_username, created_at }], has_more }`; no invite code or member list. Requires `scripts/migrate_open_rooms.sql`. |
+| GET | `/room/open?book_id=&limit=&offset=` | Yes | Open rooms (`is_private = false`) the caller didn't make and isn't in, optionally only those reading `book_id`. Rooms reading a book first, then more members, then newer. `limit` defaults to 20, at most 50. Leaves out rooms made by someone the caller blocked. Returns `{ rooms: [{ id, name, description, current_book: { book_id, title, cover_image_url } \| null, member_count, creator_username, created_at }], has_more }`; no invite code or member list. Requires `scripts/migrate_open_rooms.sql`. |
 | POST | `/room/{id}/join` | Yes | Join an open room without a code. Returns the Room Detail, and tells the creator as `/room/join` does. `404` unknown room, `403` invite-only, `409` already a member (even if the room has since gone invite-only). |
-| GET | `/room/{id}` | Yes | Full Room Detail: the room, `members[]` (`user_id`, `username`, `role`, `joined_at`), `current_book`, and `bucket` (`{ id, name, type, books[] }`). `403` for non-members. |
+| GET | `/room/{id}` | Yes | Full Room Detail: the room, `members[]` (`user_id`, `username`, `role`, `joined_at`, `blocked`), `current_book`, and `bucket` (`{ id, name, type, books[] }`). `blocked` is whether the caller has blocked that member. `403` for non-members. |
 | PATCH | `/room/{id}` | Yes | Change who can join. Body: `{ is_private }`; fields left out are unchanged. Creator-only (`403`). Members and the invite code stay. Returns the Room Detail. |
 | DELETE | `/room/{id}` | Yes | Delete a room. Creator-only (`403`); `room_members` rows cascade. Returns `204`. |
 | DELETE | `/room/{id}/members/me` | Yes | Leave a room. The creator can't leave (`403`) — they delete it instead. Returns `204`. |
@@ -181,10 +197,11 @@ with `current_bucket_type` rather than a single-table foreign key — see
 
 | Method | Route | Auth | Description |
 |--------|-------|------|-------------|
-| GET | `/room/{id}/book/{bookId}/comments` | Yes | The comment layer for one book in one room. Returns `{ room_id, book_id, furthest_page, threads[], locked_count, unlocked_unread_count }`. Each thread is `{ anchor_key, page, anchor_text, anchor_bounds, file_hash, comments[], unread_count }`, and each comment carries `likes`, `liked_by_me`, `read` and its `replies[]`. `403` for non-members. |
-| POST | `/room/{id}/book/{bookId}/comments` | Yes | Create a comment. Body: `{ page, anchor_text, anchor_bounds, parent_id, body, client_id, file_hash }`. `page` is 0-based; omit `anchor_text` for a page-level comment. Sending `parent_id` makes it a reply, which inherits the root's page, anchor and room — values in the body are ignored. Also advances the author's `furthest_page` to `GREATEST(existing, page)`. `201`; `400` nested reply or bad body; `403` non-member; `404` unknown room, book or parent. |
+| GET | `/room/{id}/book/{bookId}/comments` | Yes | The comment layer for one book in one room. Returns `{ room_id, book_id, furthest_page, threads[], locked_count, unlocked_unread_count }`. Each thread is `{ anchor_key, page, anchor_text, anchor_bounds, file_hash, comments[], unread_count }`, and each comment carries `likes`, `liked_by_me`, `read` and its `replies[]`. A first comment kept only for its replies has `deleted: "author" \| "moderator"` or, for one the caller reported, `hidden: "reported"`, with no `user_id`, `username`, `body` or likes. `403` for non-members. |
+| POST | `/room/{id}/book/{bookId}/comments` | Yes | Create a comment. Body: `{ page, anchor_text, anchor_bounds, parent_id, body, client_id, file_hash }`. `page` is 0-based; omit `anchor_text` for a page-level comment. Sending `parent_id` makes it a reply, which inherits the root's page, anchor and room — values in the body are ignored. Also advances the author's `furthest_page` to `GREATEST(existing, page)`. `201`; `400` nested reply, bad body, or blocked words; `403` non-member; `404` unknown room, book or parent, or a parent that was deleted. |
 | POST | `/room/{id}/book/{bookId}/comments/read` | Yes | Mark comments read. Body: `{ comment_ids: [] }`; ids that aren't comments on this book in this room are dropped. Returns `204`. |
-| POST | `/comments/{commentId}/like` | Yes | Like a comment. Idempotent. Membership is checked through the comment's own room. Returns `204`. |
+| DELETE | `/comments/{commentId}` | Yes | Delete your own comment. With replies, it stays as a placeholder (`deleted: "author"`, no body, author or likes); without, it's removed, along with a placeholder it was the last reply under. `204`; `403` not the author; `404` unknown or already deleted. |
+| POST | `/comments/{commentId}/like` | Yes | Like a comment. Idempotent. Membership is checked through the comment's own room. Returns `204`; `404` for a deleted placeholder. |
 | DELETE | `/comments/{commentId}/like` | Yes | Remove a like. Idempotent. Returns `204`. |
 
 Comments key on the **room and the book together**: the same book read in two
@@ -202,9 +219,19 @@ read ahead with. `furthest_page` is used rather than `current_page` so that
 flipping back to re-read an earlier passage can't re-lock what a reader has
 already been shown. See `scripts/migrate_book_comments.sql`.
 
+**Blocks and reports.** Nothing by someone the caller blocked is sent to them: not their threads (with every reply), not their replies elsewhere, and not in `locked_count` or the unread counts (nor in `newly_unlocked` on `PUT /progress/{bookId}`). A comment the caller reported is gone for them too: a reply entirely, a first comment down to its `hidden: "reported"` placeholder while it has replies. A placeholder is never unread or locked. See `scripts/migrate_report_block.sql`.
+
 `file_hash` is the fingerprint of the PDF the anchor was taken from. Two files
 can share a `book_id`, so the reader compares this against the document it
 actually opened and declines to draw anchors from a different edition.
+
+---
+
+## Reports
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| POST | `/reports` | Yes | Report a comment, reader or room. Body: `{ target_type: "comment" \| "user" \| "room", target_id, room_id?, reason, details? }`. `reason` is `harassment`, `hate`, `sexual`, `violence`, `self_harm`, `spam` or `other`; `details` (≤ 500 characters) is required for `other`. The target must be something the caller can see: a live comment in their room, a reader they share a room with (`room_id`, if sent, one of those rooms), a room they're in or an open room. Stores a copy of the text (the comment, the username, or the room's name and description) that outlives it. `201 { id }`; `200 { status: "already_reported" }` if the caller already has an open report on it (no second alert); `400` bad reason or details, or your own content, yourself or the Deleted reader; `404` not visible; `429` after 30 in 24 hours. Every admin is notified (see below). |
 
 ---
 

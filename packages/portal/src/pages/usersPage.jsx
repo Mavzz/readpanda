@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import DataTable from '../components/dataTable';
-import { PageHeader } from '../components/ui';
+import { PageHeader, Tag } from '../components/ui';
+import { isSuspended } from '../services/moderation';
 
 const UsersPage = () => {
   const navigate = useNavigate();
@@ -10,10 +11,16 @@ const UsersPage = () => {
     ? () => navigate(`/users/${row.uuid}`)
     : null;
 
+  // A suspended reader (report-block R9.6) stands out from the true/false
+  // of everyone else.
+  const renderCell = (column, row) => (column === 'isactive' && isSuspended(row)
+    ? <Tag muted>Suspended</Tag>
+    : undefined);
+
   return (
     <>
       <PageHeader title="Users" />
-      <DataTable table="users" cellLink={cellLink} />
+      <DataTable table="users" cellLink={cellLink} renderCell={renderCell} />
     </>
   );
 };

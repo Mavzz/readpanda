@@ -262,6 +262,8 @@ type RoomMemberDetail struct {
 	// Progress through the room's current book; 0 when none is chosen or the
 	// member hasn't opened it.
 	ProgressPct int `json:"progress_pct"`
+	// The reader asking has blocked this member (report-block R5.6).
+	Blocked bool `json:"blocked"`
 }
 
 // RoomBucket is the reading list a room is working through. Buckets live in
@@ -361,6 +363,12 @@ type BookComment struct {
 	Read      bool          `json:"read"`
 	CreatedAt time.Time     `json:"created_at"`
 	Replies   []BookComment `json:"replies"`
+	// "author" or "moderator" on a deleted comment kept for its replies
+	// (report-block R7.3, R9.2). It then has no author, body or likes.
+	Deleted string `json:"deleted,omitempty"`
+	// "reported" on a comment the reader asking reported, kept as a
+	// placeholder for its replies (report-block R1.4). No author, body or likes.
+	Hidden string `json:"hidden,omitempty"`
 }
 
 // BookCommentThread is every comment sharing one anchor — one gutter dot in

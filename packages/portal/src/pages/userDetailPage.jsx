@@ -4,14 +4,18 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { RowsTable } from '../components/dataTable';
 import { useDeleteRow } from '../components/useDeleteRow';
-import { Banner, Button, Card, Eyebrow, Loading, PageHeader, Section, TextAction } from '../components/ui';
+import { useConfirm } from '../components/useConfirm';
+import { isSuspended, setUserActive } from '../services/moderation';
+import { Banner, Button, Card, Eyebrow, Loading, PageHeader, Section, Tag, TextAction } from '../components/ui';
 
 const UserDetailPage = () => {
   const { uuid } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const deleteRow = useDeleteRow();
+  const confirm = useConfirm();
   const [banner, setBanner] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['admin-user', uuid],
@@ -32,17 +36,42 @@ const UserDetailPage = () => {
     }
   };
 
+  // Suspend or reinstate (report-block R9.6, R10.4).
+  const toggleSuspended = async (user) => {
+    const suspending = !isSuspended(user);
+    const ok = await confirm(suspending
+      ? { title: 'Suspend reader', message: `${user.username} is signed out and can't sign in or post until you reinstate them. Their comments stay.`, action: 'Suspend' }
+      : { title: 'Reinstate reader', message: `${user.username} can sign in and post again.`, action: 'Reinstate' });
+    if (!ok) return;
+    setSaving(true);
+    try {
+      await setUserActive(user.uuid, !suspending);
+      refresh();
+    } catch (err) {
+      setBanner(`Couldn't change that: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const back = <TextAction onClick={() => navigate('/users')} className="self-start">← All users</TextAction>;
 
   if (isLoading) return <>{back}<Loading /></>;
   if (error) return <>{back}<Banner message={error.message} onRetry={refetch} /></>;
 
   const { user, related } = data;
+  const suspended = isSuspended(user);
 
   return (
     <>
       {back}
       <PageHeader title={user.username} subtitle={user.email}>
+        {suspended && <Tag muted>Suspended</Tag>}
+        {user.username !== 'deleted.reader' && (
+          <Button variant="secondary" disabled={saving} onClick={() => toggleSuspended(user)}>
+            {suspended ? 'Reinstate' : 'Suspend'}
+          </Button>
+        )}
         <Button variant="secondary" onClick={() => tryDelete('users', ['uuid'], user, () => { refresh(); navigate('/users'); })}>
           Delete user
         </Button>

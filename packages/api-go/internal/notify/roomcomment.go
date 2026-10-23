@@ -59,6 +59,7 @@ func RoomComment(e RoomCommentEvent) error {
 		    WHERE m.room_id = $1
 		      AND m.user_id <> $4::uuid
 		      AND NOT (m.user_id = ANY($5::uuid[]))
+		      AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = m.user_id AND b.blocked_id = $4::uuid)
 		      AND `+switchedOn(models.NotificationTypeRoomComments, "m.user_id")+`
 		 )
 		 INSERT INTO notifications

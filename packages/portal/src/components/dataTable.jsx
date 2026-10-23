@@ -28,7 +28,8 @@ const Cell = ({ value }) => {
 };
 
 // Plain rows table: header, cells, optional per-row delete and click-through.
-export const RowsTable = ({ columns, primaryKey = [], rows, onDelete, cellLink, sort, onSort }) => (
+// renderCell(column, row) can stand in for a cell; undefined keeps the value.
+export const RowsTable = ({ columns, primaryKey = [], rows, onDelete, cellLink, renderCell, sort, onSort }) => (
   <div className="overflow-x-auto bg-surface-1 rounded-card">
     <table className="min-w-full text-[13px] border-collapse">
       <thead>
@@ -60,15 +61,15 @@ export const RowsTable = ({ columns, primaryKey = [], rows, onDelete, cellLink, 
           <tr key={primaryKey.length ? primaryKey.map((c) => row[c]).join('|') : i} className="hairline-b last:shadow-none hover:bg-surface-2">
             {columns.map((c) => {
               const link = cellLink?.(c.name, row);
+              const custom = renderCell?.(c.name, row);
+              const content = custom !== undefined ? custom : <Cell value={row[c.name]} />;
               return (
                 <td key={c.name} className="px-4 py-2.5 text-ink-body align-top">
                   {link ? (
                     <button type="button" onClick={link} className="p-0 bg-transparent text-link font-bold hover:underline text-left">
-                      <Cell value={row[c.name]} />
+                      {content}
                     </button>
-                  ) : (
-                    <Cell value={row[c.name]} />
-                  )}
+                  ) : content}
                 </td>
               );
             })}
@@ -157,7 +158,7 @@ const AddRowForm = ({ table, columns, onCreated, onCancel }) => {
 const PAGE_SIZE = 50;
 
 // Full browser for one table: search, sort, paginate, insert, delete.
-const DataTable = ({ table, cellLink }) => {
+const DataTable = ({ table, cellLink, renderCell }) => {
   const queryClient = useQueryClient();
   const deleteRow = useDeleteRow();
   const [search, setSearch] = useState('');
@@ -245,6 +246,7 @@ const DataTable = ({ table, cellLink }) => {
           rows={data?.rows ?? []}
           onDelete={onDelete}
           cellLink={cellLink}
+          renderCell={renderCell}
           sort={sort}
           onSort={onSort}
         />

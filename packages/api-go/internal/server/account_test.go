@@ -142,6 +142,9 @@ func TestDeleteMeLeavesNothingBehind(t *testing.T) {
 	a.exec(`INSERT INTO book_comment_likes (comment_id, user_id) VALUES ('theirs', $1)`, owner.ID)
 	a.exec(`INSERT INTO book_comment_reads (user_id, comment_id) VALUES ($1, 'theirs')`, owner.ID)
 	a.exec(`UPDATE users SET apple_refresh_token = 'apple-token' WHERE uuid = $1`, owner.ID)
+	a.exec(`INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2), ($2, $1)`, owner.ID, other.ID)
+	a.exec(`INSERT INTO content_reports (id, reporter_id, target_type, target_id, target_user_id, room_id, reason, snapshot)
+		VALUES ('rp_1', $1, 'comment', 'theirs', $2, $3, 'spam', 'their words')`, owner.ID, other.ID, club.ID)
 
 	// No Apple key in the test config: the revoke is skipped and logged, and
 	// the deletion still succeeds (R4.3).
@@ -176,6 +179,10 @@ func TestDeleteMeLeavesNothingBehind(t *testing.T) {
 	}
 	if a.count(`SELECT count(*) FROM users WHERE uuid = $1`, owner.ID) != 0 {
 		t.Error("the account is still there")
+	}
+	// Their report stays for the moderators, without a reporter (report-block R3.3).
+	if a.count(`SELECT count(*) FROM content_reports WHERE id = 'rp_1' AND reporter_id IS NULL`) != 1 {
+		t.Error("the deleted reader's report went, or still names them")
 	}
 	// The other reader's room, comment and membership are untouched.
 	if a.count(`SELECT count(*) FROM book_comments WHERE id = 'theirs' AND user_id = $1`, other.ID) != 1 {
