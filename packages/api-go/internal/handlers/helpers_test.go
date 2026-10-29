@@ -1,6 +1,9 @@
 package handlers
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestProgressPct(t *testing.T) {
 	cases := []struct{ current, total, want int }{
@@ -42,5 +45,27 @@ func TestAnchorKey(t *testing.T) {
 	}
 	if got := anchorKey(7, "   "); got != "page:7" {
 		t.Errorf("whitespace-only anchor = %q, want page:7", got)
+	}
+}
+
+func TestEffectiveReadAt(t *testing.T) {
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name, raw string
+		want      time.Time
+	}{
+		{"missing", "", now}, // older apps send none
+		{"unparseable", "yesterday", now},
+		{"past", "2026-10-26T09:30:00Z", time.Date(2026, 10, 26, 9, 30, 0, 0, time.UTC)},
+		// What the app sends: JS toISOString, with milliseconds.
+		{"past with millis", "2026-10-26T09:30:00.250Z", time.Date(2026, 10, 26, 9, 30, 0, 250e6, time.UTC)},
+		{"offset", "2026-10-26T15:00:00+05:30", time.Date(2026, 10, 26, 9, 30, 0, 0, time.UTC)},
+		{"future", "2026-10-28T12:00:00Z", now}, // a phone clock set ahead
+	}
+	for _, c := range cases {
+		got := effectiveReadAt(c.raw, now)
+		if !got.Equal(c.want) || got.Location() != time.UTC {
+			t.Errorf("%s: effectiveReadAt(%q) = %v, want %v in UTC", c.name, c.raw, got, c.want)
+		}
 	}
 }

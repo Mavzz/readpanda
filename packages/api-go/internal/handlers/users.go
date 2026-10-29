@@ -733,17 +733,6 @@ func (h *UserHandler) RefreshAccessToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Check if refresh token exists in database
-	var count int
-	err = database.DB.QueryRow(
-		"SELECT COUNT(*) FROM refresh_tokens WHERE user_id = $1 AND token = $2 AND expires_at > NOW()",
-		claims.UserID, req.RefreshToken,
-	).Scan(&count)
-	if err != nil || count == 0 {
-		http.Error(w, `{"error": "Invalid or expired refresh token"}`, http.StatusUnauthorized)
-		return
-	}
-
 	// Re-fetch the user's current role rather than trusting a role embedded
 	// in the refresh token, so a role change takes effect on the very next
 	// refresh instead of waiting out the old access token's TTL.
@@ -772,8 +761,15 @@ func (h *UserHandler) RefreshAccessToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer tx.Rollback()
-	if err := storeRefreshToken(tx, claims.UserID, newRefreshToken); err != nil {
+	// Checks the token is still this device's and replaces it in one step,
+	// so two refreshes racing with the same token can't both succeed.
+	rotated, err := rotateRefreshToken(tx, claims.UserID, req.RefreshToken, newRefreshToken)
+	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+	if !rotated {
+		http.Error(w, `{"error": "Invalid or expired refresh token"}`, http.StatusUnauthorized)
 		return
 	}
 	if err := tx.Commit(); err != nil {
@@ -887,30 +883,43 @@ func initializeUserPreferences(tx dbExecutor, userID string) (map[string]interfa
 	return preferencesData, nil
 }
 
+// How long a stored refresh token lasts: the same 7 days as the refresh JWT
+// itself (utils.GenerateTokens).
+const refreshTokenTTL = 7 * 24 * time.Hour
+
+// storeRefreshToken keeps a refresh token for one sign-in. Each sign-in
+// gets its own row, so signing in on the iPad doesn't sign the phone out:
+// with one row per account, the next sign-in or refresh anywhere replaced
+// every other device's token (specs/offline-first R12). The reader's expired
+// rows go at the same time, so they don't pile up.
 func storeRefreshToken(tx dbExecutor, userID, refreshToken string) error {
-	expiresAt := time.Now().Add(7 * 24 * time.Hour)
-
-	var tokenID int
-	err := tx.QueryRow(
-		"SELECT id FROM refresh_tokens WHERE user_id = $1 AND expires_at > NOW()",
+	if _, err := tx.Exec(
+		"DELETE FROM refresh_tokens WHERE user_id = $1 AND expires_at <= NOW()",
 		userID,
-	).Scan(&tokenID)
-
-	if err != nil {
-		// No existing token, insert new one
-		_, err = tx.Exec(
-			"INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)",
-			userID, refreshToken, expiresAt,
-		)
+	); err != nil {
 		return err
 	}
-
-	// Update existing token
-	_, err = tx.Exec(
-		"UPDATE refresh_tokens SET token = $1, expires_at = $2 WHERE id = $3",
-		refreshToken, expiresAt, tokenID,
+	_, err := tx.Exec(
+		"INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)",
+		userID, refreshToken, time.Now().Add(refreshTokenTTL),
 	)
 	return err
+}
+
+// rotateRefreshToken swaps the token a device refreshed with for its new one,
+// leaving the reader's other devices alone. False when the old token isn't
+// there (already used, expired, or signed out), which the caller refuses.
+func rotateRefreshToken(tx dbExecutor, userID, oldToken, newToken string) (bool, error) {
+	result, err := tx.Exec(
+		`UPDATE refresh_tokens SET token = $3, expires_at = $4
+		  WHERE user_id = $1 AND token = $2 AND expires_at > NOW()`,
+		userID, oldToken, newToken, time.Now().Add(refreshTokenTTL),
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n == 1, err
 }
 
 // DeleteMe — DELETE /users/me (app spec account-deletion R4–R6).

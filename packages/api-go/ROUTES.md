@@ -20,7 +20,7 @@ Authorization: Bearer <access_token>
 | POST | `/auth/google` | No | Authenticate via Google ID token. Body: `{ token }`. Creates account on first login. Returns access/refresh tokens. |
 | POST | `/auth/apple` | No | Sign in with Apple. Body: `{ identity_token, authorization_code?, full_name? }`. Verifies the token against Apple's keys (audience `APPLE_BUNDLE_ID`); finds the account by Apple id, else links one with the same verified email, else creates one (`201`, with preferences). With `APPLE_TEAM_ID`/`APPLE_KEY_ID`/`APPLE_PRIVATE_KEY` set, also stores Apple's refresh token so deleting the account can revoke it. `401` invalid token; `400` if Apple shared no email for a new account. |
 | POST | `/auth/logout` | Yes | Logout the current user. |
-| POST | `/token/refresh` | No | Refresh an expired access token. Body: `{ refresh_token }`. Returns a new access token. |
+| POST | `/token/refresh` | No | Refresh an expired access token. Body: `{ refreshToken }`. Returns `{ accessToken, refreshToken }`: the refresh token is rotated, so the one sent is spent. Each sign-in has its own refresh token, so refreshing on one device leaves the account's other devices signed in. `401` for a spent, expired or signed-out token. |
 
 **Blocked words.** A username, room name or description, or comment containing a word on the list in `internal/moderation/wordlist.go` is refused with `400 { error: "That includes words we don't allow.", code: "blocked_words", field }`. Matching is on whole words, ignoring case, accents and look-alike characters ("Scunthorpe" passes). Apple and Google sign-up, which make the username from the reader's name, fall back to `reader` instead of refusing.
 
@@ -234,6 +234,14 @@ actually opened and declines to draw anchors from a different edition.
 | POST | `/reports` | Yes | Report a comment, reader or room. Body: `{ target_type: "comment" \| "user" \| "room", target_id, room_id?, reason, details? }`. `reason` is `harassment`, `hate`, `sexual`, `violence`, `self_harm`, `spam` or `other`; `details` (≤ 500 characters) is required for `other`. The target must be something the caller can see: a live comment in their room, a reader they share a room with (`room_id`, if sent, one of those rooms), a room they're in or an open room. Stores a copy of the text (the comment, the username, or the room's name and description) that outlives it. `201 { id }`; `200 { status: "already_reported" }` if the caller already has an open report on it (no second alert); `400` bad reason or details, or your own content, yourself or the Deleted reader; `404` not visible; `429` after 30 in 24 hours. Every admin is notified (see below). |
 
 ---
+
+## Reading progress
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| GET | `/progress` | Yes | Every book the caller has a position in, most recently read first, with the book's title, cover and manuscript url. |
+| PUT | `/progress/{bookId}` | Yes | Publish where the caller is in a book. Body: `{ current_page, total_pages, read_at }`. `current_page` is 0-based. A `total_pages` of 0 keeps the length already known. `read_at` (RFC 3339, optional) is when the page was read; the app sends it because saves made offline arrive late. A save read before the stored `last_read_at` keeps the stored page, length and time. Missing, unparseable or future `read_at` means now. `furthest_page` only climbs, late saves included. Returns the stored row with `progress_pct` and `newly_unlocked` (comments the save carried the reader past). `200`; `400` negative pages; `404` unknown book. |
+| GET | `/room/{id}/progress` | Yes | Every member's place in the room's current book, including members who haven't opened it (page 0). Admin first. `403` non-member. |
 
 ## Highlights
 

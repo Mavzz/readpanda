@@ -48,7 +48,23 @@ func progressPct(currentPage, totalPages int) int {
 	return pct
 }
 
-// PutMyProgress — PUT /progress/{bookId}  {"current_page": 40, "total_pages": 210}
+// effectiveReadAt is when a progress save says its page was read. The app
+// queues saves made offline and sends them later, so the page may have been
+// read long before the request arrives. Anything missing or unreadable is
+// read now, and so is a time ahead of the server's clock: a phone set to the
+// future must not be able to pin its page over every later one.
+func effectiveReadAt(raw string, now time.Time) time.Time {
+	if raw == "" {
+		return now
+	}
+	readAt, err := time.Parse(time.RFC3339, raw)
+	if err != nil || readAt.After(now) {
+		return now
+	}
+	return readAt.UTC()
+}
+
+// PutMyProgress — PUT /progress/{bookId}  {"current_page": 40, "total_pages": 210, "read_at": "…"}
 //
 // Publishes where the caller is in a book. The mobile app keeps its own
 // position locally and reads from there, so this is a broadcast for other
@@ -65,8 +81,9 @@ func (h *ProgressHandler) PutMyProgress(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req struct {
-		CurrentPage int `json:"current_page"`
-		TotalPages  int `json:"total_pages"`
+		CurrentPage int    `json:"current_page"`
+		TotalPages  int    `json:"total_pages"`
+		ReadAt      string `json:"read_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
@@ -86,28 +103,38 @@ func (h *ProgressHandler) PutMyProgress(w http.ResponseWriter, r *http.Request) 
 	}
 
 	now := time.Now().UTC()
+	readAt := effectiveReadAt(req.ReadAt, now)
 	var stored models.ReadingProgress
+	// A save read before the stored one is late, not newer: a phone that was
+	// offline for a day syncing after the iPad has moved on. It keeps the
+	// stored page, length and time, so it can't drag the reader backwards on
+	// everyone's pace track.
+	//
 	// Backing out of the reader before the PDF reports its length sends a
 	// total_pages of 0. That must not erase a length we already knew, or the
 	// reader would drop to 0% on everyone else's track — the same guard the
 	// client applies to its local copy.
 	//
-	// furthest_page only ever climbs. It is the line the comment spoiler rule
-	// is drawn at, so flipping back to re-read an earlier chapter must not
-	// re-lock comments the reader has already been shown.
+	// furthest_page only ever climbs, late saves included. It is the line the
+	// comment spoiler rule is drawn at, so flipping back to re-read an earlier
+	// chapter must not re-lock comments the reader has already been shown,
+	// and pages really read offline still unlock theirs.
 	err = database.DB.QueryRow(
 		`INSERT INTO reading_progress (user_id, book_id, current_page, total_pages, furthest_page, last_read_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $3, $5, $5)
+		 VALUES ($1, $2, $3, $4, $3, $5, $6)
 		 ON CONFLICT (user_id, book_id) DO UPDATE
-		    SET current_page = EXCLUDED.current_page,
-		        total_pages  = CASE WHEN EXCLUDED.total_pages > 0
+		    SET current_page = CASE WHEN EXCLUDED.last_read_at >= reading_progress.last_read_at
+		                            THEN EXCLUDED.current_page
+		                            ELSE reading_progress.current_page END,
+		        total_pages  = CASE WHEN EXCLUDED.last_read_at >= reading_progress.last_read_at
+		                             AND EXCLUDED.total_pages > 0
 		                            THEN EXCLUDED.total_pages
 		                            ELSE reading_progress.total_pages END,
 		        furthest_page = GREATEST(reading_progress.furthest_page, EXCLUDED.current_page),
-		        last_read_at = EXCLUDED.last_read_at,
+		        last_read_at = GREATEST(reading_progress.last_read_at, EXCLUDED.last_read_at),
 		        updated_at   = EXCLUDED.updated_at
 		 RETURNING user_id, book_id, current_page, total_pages, furthest_page, last_read_at`,
-		userID, bookID, req.CurrentPage, req.TotalPages, now,
+		userID, bookID, req.CurrentPage, req.TotalPages, readAt, now,
 	).Scan(&stored.UserID, &stored.BookID, &stored.CurrentPage, &stored.TotalPages, &stored.FurthestPage, &stored.LastReadAt)
 	if isForeignKeyViolation(err) {
 		http.Error(w, `{"error": "Book not found"}`, http.StatusNotFound)
