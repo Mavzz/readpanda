@@ -197,6 +197,32 @@ func usernameFrom(source string) string {
 	return name
 }
 
+// socialUsername is the first name to try for a new Apple or Google account,
+// made from their name (or email) since the reader doesn't pick it. A listed
+// word just falls back to the plain one (report-block R8.1); taken, it moves
+// to a free one nearby.
+func socialUsername(source string) string {
+	if strings.TrimSpace(source) == "" || moderation.Check(source) != nil {
+		source = "reader"
+	}
+	username := usernameFrom(source)
+	if taken, err := usernameTaken(username); err == nil && taken {
+		if suggestion := suggestUsername(username); suggestion != "" {
+			username = suggestion
+		}
+	}
+	return username
+}
+
+// withSuffix is the retry after the insert found the name taken anyway:
+// 13 characters, "_" and a 6-character code, so still within the rule's 20.
+func withSuffix(username, code string) string {
+	if len(username) > 13 {
+		username = strings.TrimRight(username[:13], "._")
+	}
+	return username + "_" + strings.ToLower(code)
+}
+
 // appleKey is the Sign in with Apple key from config; it may be unset.
 func (h *UserHandler) appleKey() utils.AppleKey {
 	return utils.AppleKey{
@@ -279,12 +305,12 @@ func (h *UserHandler) AppleAuth(w http.ResponseWriter, r *http.Request) {
 		}
 		h.keepAppleRefreshToken(user.UUID, req.AuthorizationCode)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(models.TokenResponse{
+		json.NewEncoder(w).Encode(withAccount(models.TokenResponse{
 			Username:     user.Username,
 			Email:        user.Email,
 			AccessToken:  accessToken,
 			RefreshToken: refreshToken,
-		})
+		}, user.UUID))
 		return
 	}
 
@@ -301,17 +327,7 @@ func (h *UserHandler) AppleAuth(w http.ResponseWriter, r *http.Request) {
 	if source == "" && !identity.PrivateEmail {
 		source = strings.SplitN(email, "@", 2)[0]
 	}
-	// The reader doesn't pick this name, so a listed word in it just falls
-	// back to the plain one (report-block R8.1).
-	if source == "" || moderation.Check(source) != nil {
-		source = "reader"
-	}
-	username := usernameFrom(source)
-	if taken, err := usernameTaken(username); err == nil && taken {
-		if suggestion := suggestUsername(username); suggestion != "" {
-			username = suggestion
-		}
-	}
+	username := socialUsername(source)
 
 	tx, err := database.DB.Begin()
 	if err != nil {
@@ -338,11 +354,7 @@ func (h *UserHandler) AppleAuth(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error": "Failed to generate a unique username"}`, http.StatusInternalServerError)
 			return
 		}
-		base := username
-		if len(base) > 13 {
-			base = base[:13]
-		}
-		username = base + "_" + strings.ToLower(suffix)
+		username = withSuffix(username, suffix)
 	}
 
 	preferencesData, err := initializeUserPreferences(tx, newUserUID)
@@ -367,13 +379,13 @@ func (h *UserHandler) AppleAuth(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(models.TokenResponse{
+	json.NewEncoder(w).Encode(withAccount(models.TokenResponse{
 		Username:     user.Username,
 		Email:        email,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		Preferences:  preferencesData,
-	})
+	}, newUserUID))
 }
 
 // CreateUser creates a new user (signup)
@@ -476,6 +488,9 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		"preferences":  preferencesData,
 		"accessToken":  accessToken,
 		"refreshToken": refreshToken,
+		"user_id":      user.UUID,
+		"display_name": nil,
+		"login_type":   models.LoginTypeEmail,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -536,12 +551,12 @@ func (h *UserHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 	}
 	tx.Commit()
 
-	response := models.TokenResponse{
+	response := withAccount(models.TokenResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		Username:     user.Username,
 		Email:        user.Email,
-	}
+	}, user.UUID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
@@ -618,12 +633,12 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 		storeRefreshToken(tx, user.UUID, refreshToken)
 		tx.Commit()
 
-		response := models.TokenResponse{
+		response := withAccount(models.TokenResponse{
 			Username:     user.Username,
 			Picture:      picture,
 			AccessToken:  accessToken,
 			RefreshToken: refreshToken,
-		}
+		}, user.UUID)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
@@ -639,16 +654,9 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 
 	newUserUID := utils.GenerateUserUID()
-	// The Google display name isn't guaranteed unique and username has a
-	// UNIQUE constraint — try the raw name first, then fall back to
-	// name+random suffix on collision (same retry-on-conflict shape used for
-	// room invite codes).
-	username := name
-	// The reader doesn't pick this name, so a listed word in it just falls
-	// back to a plain one (report-block R8.1).
-	if moderation.Check(username) != nil {
-		username = "reader"
-	}
+	// Made to fit the sign-up rule, as Apple's are. Accounts from before this
+	// kept the Google name as it came ("Mira Anand"); Edit profile can fix one.
+	username := socialUsername(name)
 	for attempt := 0; ; attempt++ {
 		err = tx.QueryRow(
 			"INSERT INTO users (username, email, isactive, login_type, uuid, google_sub) VALUES ($1, $2, $3, $4, $5, $6) RETURNING username",
@@ -666,7 +674,7 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error": "Failed to generate a unique username"}`, http.StatusInternalServerError)
 			return
 		}
-		username = name + "_" + strings.ToLower(suffix)
+		username = withSuffix(username, suffix)
 	}
 
 	// Initialize user preferences
@@ -694,14 +702,14 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := models.TokenResponse{
+	response := withAccount(models.TokenResponse{
 		Username:     user.Username,
 		Email:        email,
 		Picture:      picture,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		Preferences:  preferencesData,
-	}
+	}, newUserUID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -777,10 +785,12 @@ func (h *UserHandler) RefreshAccessToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	response := map[string]string{
-		"accessToken":  accessToken,
-		"refreshToken": newRefreshToken,
-	}
+	// With the account fields, so a session stored before the app kept them
+	// gets its id here (app spec coming-soon R6.2).
+	response := withAccount(models.TokenResponse{
+		AccessToken:  accessToken,
+		RefreshToken: newRefreshToken,
+	}, claims.UserID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)

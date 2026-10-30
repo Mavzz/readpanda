@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -341,16 +342,23 @@ func (h *BucketHandler) AddBooksToBucket(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// New books go to the end of the bucket's manual order.
+	// New books go to the end of the bucket's manual order. $1 is typed
+	// because Postgres deduces text in the subquery and varchar in VALUES, and
+	// refuses the insert otherwise.
 	now := time.Now().UTC()
 	for _, bookID := range req.BookIDs {
-		_, _ = database.DB.Exec(
+		_, err := database.DB.Exec(
 			`INSERT INTO user_bucket_books (bucket_id, book_id, added_at, sort_order)
-			 VALUES ($1, $2, $3,
-			         (SELECT COALESCE(MAX(sort_order) + 1, 0) FROM user_bucket_books WHERE bucket_id = $1))
+			 VALUES ($1::varchar, $2, $3,
+			         (SELECT COALESCE(MAX(sort_order) + 1, 0) FROM user_bucket_books WHERE bucket_id = $1::varchar))
 			 ON CONFLICT DO NOTHING`,
 			bucketID, bookID, now,
 		)
+		if err != nil {
+			log.Printf("add book %s to bucket %s: %v", bookID, bucketID, err)
+			http.Error(w, `{"error": "Failed to add books"}`, http.StatusInternalServerError)
+			return
+		}
 	}
 
 	var bookCount int

@@ -432,6 +432,59 @@ func (h *BookHandler) GetAllBooks(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// likePattern escapes LIKE's wildcards so a search for "50%" or "a_b" matches
+// those characters, not anything.
+func likePattern(q string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return "%" + r.Replace(q) + "%"
+}
+
+// SearchBooks finds books by title or author (coming-soon R1.6): the same
+// rows as /books/all, case-insensitive, best matches first (the title
+// starting with the query, then containing it, then the author), up to 50.
+func (h *BookHandler) SearchBooks(w http.ResponseWriter, r *http.Request) {
+	if _, ok := utils.ExtractUserID(w, r, h.Config.JWTSecret); !ok {
+		return
+	}
+
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len([]rune(q)) < 2 {
+		http.Error(w, `{"error": "q must be at least 2 characters"}`, http.StatusBadRequest)
+		return
+	}
+	contains := likePattern(q)
+	prefix := contains[1:]
+
+	rows, err := database.DB.Query(`
+		SELECT book_id, title, COALESCE(description, ''), COALESCE(subgenre, ''), COALESCE(genre, ''), author_name, page_count, cover_image_url, manuscript_url, status, COALESCE(views, 0), created_at
+		FROM books
+		WHERE title ILIKE $1 ESCAPE '\' OR COALESCE(author_name, '') ILIKE $1 ESCAPE '\'
+		ORDER BY CASE
+			WHEN title ILIKE $2 ESCAPE '\' THEN 0
+			WHEN title ILIKE $1 ESCAPE '\' THEN 1
+			ELSE 2
+		END, LOWER(title)
+		LIMIT 50`, contains, prefix)
+	if err != nil {
+		http.Error(w, `{"error": "Failed to search books"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	books := []models.Book{}
+	for rows.Next() {
+		var book models.Book
+		if err := rows.Scan(&book.ID, &book.Title, &book.Description, &book.Subgenre, &book.Genre, &book.AuthorName, &book.PageCount, &book.CoverImageURL, &book.ManuscriptURL, &book.Status, &book.Views, &book.CreatedAt); err != nil {
+			http.Error(w, `{"error": "Failed to search books"}`, http.StatusInternalServerError)
+			return
+		}
+		books = append(books, book)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"books": books})
+}
+
 // parseCoverPath extracts genre, subgenre, and title from a cover object key.
 // Expected format: books/covers/{genre}/{subgenre}/{title}.ext
 func parseCoverPath(key string) (genre, subgenre, title string) {
