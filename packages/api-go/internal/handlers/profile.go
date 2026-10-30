@@ -91,6 +91,14 @@ func (h *UserHandler) PatchMe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error": "Invalid request body"}`, http.StatusBadRequest)
 		return
 	}
+	// The word filter covers a renamed account as it does a new one
+	// (report-block R8.1). Both fields are checked before either is saved.
+	if req.DisplayName != nil && refusedWords(w, "display_name", *req.DisplayName) {
+		return
+	}
+	if req.Username != nil && refusedWords(w, "username", *req.Username) {
+		return
+	}
 
 	if req.DisplayName != nil {
 		name := strings.TrimSpace(*req.DisplayName)

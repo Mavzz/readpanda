@@ -40,4 +40,19 @@ func TestWordFilter(t *testing.T) {
 	refused("username", "GET", "/signup/available?username=kike_reader", nil, nil)
 	a.must(http.StatusCreated, "POST", "/signup", nil,
 		map[string]string{"username": "scunthorpe", "email": "s@example.com", "password": "longenough"}, nil)
+
+	// Renaming can't get round it, and a refused field saves neither.
+	refused("username", "PATCH", "/users/me", &reader, map[string]string{"username": "big.cunt"})
+	refused("display_name", "PATCH", "/users/me", &reader, map[string]string{"display_name": "Big Cunt"})
+	refused("username", "PATCH", "/users/me", &reader,
+		map[string]string{"display_name": "Ada", "username": "kike_reader"})
+	var me struct {
+		Username    string  `json:"username"`
+		DisplayName *string `json:"display_name"`
+	}
+	a.must(http.StatusOK, "GET", "/users/me", &reader, nil, &me)
+	if me.Username != "reader" || me.DisplayName != nil {
+		t.Errorf("after refused renames: %+v", me)
+	}
+	a.must(http.StatusOK, "PATCH", "/users/me", &reader, map[string]string{"username": "scunthorpe.fan"}, nil)
 }
