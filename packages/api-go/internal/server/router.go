@@ -45,6 +45,10 @@ func NewRouter(cfg *config.Config) http.Handler {
 	// User routes
 	router.HandleFunc(apiPrefix+"/users", userHandler.GetUsers).Methods("GET")
 	router.HandleFunc(apiPrefix+"/users/me", userHandler.DeleteMe).Methods("DELETE", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/users/me", userHandler.PatchMe).Methods("PATCH")
+	router.HandleFunc(apiPrefix+"/users/me", userHandler.GetMe).Methods("GET")
+	router.HandleFunc(apiPrefix+"/users/me/email", userHandler.ChangeEmail).Methods("PUT", "OPTIONS")
+	router.HandleFunc(apiPrefix+"/users/me/password", userHandler.ChangePassword).Methods("PUT", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/signup", userHandler.CreateUser).Methods("POST", "OPTIONS")
 	// Public, so rate-limited: it says whether a username exists (sign-up R3.2).
 	router.HandleFunc(apiPrefix+"/signup/available", middleware.RateLimit(30, userHandler.UsernameAvailable)).Methods("GET")
@@ -65,6 +69,7 @@ func NewRouter(cfg *config.Config) http.Handler {
 	router.HandleFunc(apiPrefix+"/books/upload", bookHandler.PublishBook).Methods("POST", "OPTIONS")
 	router.HandleFunc(apiPrefix+"/books", bookHandler.GetBooksForUser).Methods("GET")
 	router.HandleFunc(apiPrefix+"/books/all", bookHandler.GetAllBooks).Methods("GET")
+	router.HandleFunc(apiPrefix+"/books/search", bookHandler.SearchBooks).Methods("GET")
 	router.HandleFunc(apiPrefix+"/books/seed", bookHandler.SeedBooksFromStorage).Methods("POST", "OPTIONS")
 	// After /books/all: mux takes the first route that matches, so the literal
 	// path has to be registered before the {bookId} pattern would swallow it.

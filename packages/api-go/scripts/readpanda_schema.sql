@@ -459,7 +459,8 @@ CREATE TABLE public.users (
     google_sub text,
     role character varying(20) DEFAULT 'user'::character varying NOT NULL,
     apple_sub text,
-    apple_refresh_token text
+    apple_refresh_token text,
+    display_name character varying(40)
 );
 
 
