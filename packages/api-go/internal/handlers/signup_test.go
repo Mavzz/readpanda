@@ -47,6 +47,7 @@ func TestUsernameFrom(t *testing.T) {
 		"averyveryverylongname.surname":   "averyveryverylongnam",
 		"reader":                          "reader",
 		"José María de la Cruz Fernández": "jose.maria.de.la.cru",
+		"Christopher Montgomery-Smith":    "christopher.montgome",
 	}
 	for in, want := range cases {
 		got := usernameFrom(in)
@@ -55,6 +56,26 @@ func TestUsernameFrom(t *testing.T) {
 		}
 		if !usernamePattern.MatchString(got) {
 			t.Errorf("usernameFrom(%q) = %q breaks the sign-up rules", in, got)
+		}
+	}
+}
+
+// A clash after the first choice keeps within the rule: a Google name used
+// to get its suffix added in full, past 20 (coming-soon R5.3).
+func TestWithSuffix(t *testing.T) {
+	cases := map[string]string{
+		"mira":                 "mira_x7k2qa",
+		"christopher.montgome": "christopher.m_x7k2qa",
+		"mira.anand.reads":     "mira.anand.re_x7k2qa",
+		"abcdefghijk._more":    "abcdefghijk_x7k2qa",
+	}
+	for in, want := range cases {
+		got := withSuffix(in, "X7K2QA")
+		if got != want {
+			t.Errorf("withSuffix(%q) = %q, want %q", in, got, want)
+		}
+		if !usernamePattern.MatchString(got) {
+			t.Errorf("withSuffix(%q) = %q breaks the sign-up rules", in, got)
 		}
 	}
 }

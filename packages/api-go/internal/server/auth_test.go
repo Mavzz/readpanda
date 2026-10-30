@@ -3,6 +3,8 @@ package server_test
 import (
 	"net/http"
 	"testing"
+
+	"github.com/Mavzz/readpanda/api-go/internal/database"
 )
 
 type tokens struct {
@@ -76,5 +78,70 @@ func TestProtectedRoutesNeedAToken(t *testing.T) {
 		if got := a.do(r.method, r.path, nil, nil, nil); got != http.StatusUnauthorized {
 			t.Errorf("%s %s without a token = %d, want 401", r.method, r.path, got)
 		}
+	}
+}
+
+// specs/offline-first R12: a phone and an iPad on one account each keep their
+// own sign-in. With one stored token per account, either one signing in or
+// refreshing signed the other out at its next refresh.
+func TestEachDeviceKeepsItsSignIn(t *testing.T) {
+	a := newAPI(t)
+	a.must(http.StatusCreated, "POST", "/signup", nil,
+		map[string]string{"username": "ada", "email": "ada@example.com", "password": "hunter22"}, nil)
+
+	signIn := func() tokens {
+		t.Helper()
+		var got tokens
+		a.must(http.StatusOK, "POST", "/auth/login", nil,
+			map[string]string{"username": "ada", "password": "hunter22"}, &got)
+		return got
+	}
+	refresh := func(refreshToken string) tokens {
+		t.Helper()
+		var got tokens
+		a.must(http.StatusOK, "POST", "/token/refresh", nil,
+			map[string]string{"refreshToken": refreshToken}, &got)
+		return got
+	}
+
+	phone := signIn()
+	ipad := signIn()
+
+	// Each refreshes, in turn and again: neither knocks the other out.
+	phone = refresh(phone.RefreshToken)
+	ipad = refresh(ipad.RefreshToken)
+	phone = refresh(phone.RefreshToken)
+	ipad = refresh(ipad.RefreshToken)
+
+	// A token is still single use: the phone's old one is refused.
+	old := phone.RefreshToken
+	phone = refresh(old)
+	a.must(http.StatusUnauthorized, "POST", "/token/refresh", nil,
+		map[string]string{"refreshToken": old}, nil)
+
+	// Signing out on the phone ends the phone's sign-in only.
+	a.must(http.StatusOK, "POST", "/auth/logout?username=ada", &user{Token: phone.RefreshToken}, nil, nil)
+	a.must(http.StatusUnauthorized, "POST", "/token/refresh", nil,
+		map[string]string{"refreshToken": phone.RefreshToken}, nil)
+	refresh(ipad.RefreshToken)
+}
+
+// R12.5: signing in clears the reader's expired tokens.
+func TestSignInClearsExpiredTokens(t *testing.T) {
+	a := newAPI(t)
+	a.must(http.StatusCreated, "POST", "/signup", nil,
+		map[string]string{"username": "ada", "email": "ada@example.com", "password": "hunter22"}, nil)
+	a.exec(`UPDATE refresh_tokens SET expires_at = NOW() - INTERVAL '1 day'`)
+	a.must(http.StatusOK, "POST", "/auth/login", nil,
+		map[string]string{"username": "ada", "password": "hunter22"}, nil)
+
+	var expired, live int
+	if err := database.DB.QueryRow(
+		`SELECT COUNT(*) FILTER (WHERE expires_at <= NOW()), COUNT(*) FILTER (WHERE expires_at > NOW()) FROM refresh_tokens`,
+	).Scan(&expired, &live); err != nil {
+		t.Fatal(err)
+	}
+	if expired != 0 || live != 1 {
+		t.Errorf("after sign-in: %d expired, %d live tokens; want 0 and 1", expired, live)
 	}
 }

@@ -441,6 +441,11 @@ type TokenResponse struct {
 	Username     string `json:"username,omitempty"`
 	Email        string `json:"email,omitempty"`
 	Picture      string `json:"picture,omitempty"`
+	// The account behind the tokens (app spec coming-soon R5.8): its
+	// permanent id (RevenueCat keys on it), display name and how it signs in.
+	UserID      string  `json:"user_id,omitempty"`
+	DisplayName *string `json:"display_name"`
+	LoginType   string  `json:"login_type,omitempty"`
 	// Set on first sign-up, like /signup, so the interest picker has its
 	// options before the app's own preferences fetch returns.
 	Preferences map[string]interface{} `json:"preferences,omitempty"`

@@ -197,6 +197,32 @@ func usernameFrom(source string) string {
 	return name
 }
 
+// socialUsername is the first name to try for a new Apple or Google account,
+// made from their name (or email) since the reader doesn't pick it. A listed
+// word just falls back to the plain one (report-block R8.1); taken, it moves
+// to a free one nearby.
+func socialUsername(source string) string {
+	if strings.TrimSpace(source) == "" || moderation.Check(source) != nil {
+		source = "reader"
+	}
+	username := usernameFrom(source)
+	if taken, err := usernameTaken(username); err == nil && taken {
+		if suggestion := suggestUsername(username); suggestion != "" {
+			username = suggestion
+		}
+	}
+	return username
+}
+
+// withSuffix is the retry after the insert found the name taken anyway:
+// 13 characters, "_" and a 6-character code, so still within the rule's 20.
+func withSuffix(username, code string) string {
+	if len(username) > 13 {
+		username = strings.TrimRight(username[:13], "._")
+	}
+	return username + "_" + strings.ToLower(code)
+}
+
 // appleKey is the Sign in with Apple key from config; it may be unset.
 func (h *UserHandler) appleKey() utils.AppleKey {
 	return utils.AppleKey{
@@ -279,12 +305,12 @@ func (h *UserHandler) AppleAuth(w http.ResponseWriter, r *http.Request) {
 		}
 		h.keepAppleRefreshToken(user.UUID, req.AuthorizationCode)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(models.TokenResponse{
+		json.NewEncoder(w).Encode(withAccount(models.TokenResponse{
 			Username:     user.Username,
 			Email:        user.Email,
 			AccessToken:  accessToken,
 			RefreshToken: refreshToken,
-		})
+		}, user.UUID))
 		return
 	}
 
@@ -301,17 +327,7 @@ func (h *UserHandler) AppleAuth(w http.ResponseWriter, r *http.Request) {
 	if source == "" && !identity.PrivateEmail {
 		source = strings.SplitN(email, "@", 2)[0]
 	}
-	// The reader doesn't pick this name, so a listed word in it just falls
-	// back to the plain one (report-block R8.1).
-	if source == "" || moderation.Check(source) != nil {
-		source = "reader"
-	}
-	username := usernameFrom(source)
-	if taken, err := usernameTaken(username); err == nil && taken {
-		if suggestion := suggestUsername(username); suggestion != "" {
-			username = suggestion
-		}
-	}
+	username := socialUsername(source)
 
 	tx, err := database.DB.Begin()
 	if err != nil {
@@ -338,11 +354,7 @@ func (h *UserHandler) AppleAuth(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error": "Failed to generate a unique username"}`, http.StatusInternalServerError)
 			return
 		}
-		base := username
-		if len(base) > 13 {
-			base = base[:13]
-		}
-		username = base + "_" + strings.ToLower(suffix)
+		username = withSuffix(username, suffix)
 	}
 
 	preferencesData, err := initializeUserPreferences(tx, newUserUID)
@@ -367,13 +379,13 @@ func (h *UserHandler) AppleAuth(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(models.TokenResponse{
+	json.NewEncoder(w).Encode(withAccount(models.TokenResponse{
 		Username:     user.Username,
 		Email:        email,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		Preferences:  preferencesData,
-	})
+	}, newUserUID))
 }
 
 // CreateUser creates a new user (signup)
@@ -476,6 +488,9 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		"preferences":  preferencesData,
 		"accessToken":  accessToken,
 		"refreshToken": refreshToken,
+		"user_id":      user.UUID,
+		"display_name": nil,
+		"login_type":   models.LoginTypeEmail,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -536,12 +551,12 @@ func (h *UserHandler) LoginUser(w http.ResponseWriter, r *http.Request) {
 	}
 	tx.Commit()
 
-	response := models.TokenResponse{
+	response := withAccount(models.TokenResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		Username:     user.Username,
 		Email:        user.Email,
-	}
+	}, user.UUID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
@@ -618,12 +633,12 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 		storeRefreshToken(tx, user.UUID, refreshToken)
 		tx.Commit()
 
-		response := models.TokenResponse{
+		response := withAccount(models.TokenResponse{
 			Username:     user.Username,
 			Picture:      picture,
 			AccessToken:  accessToken,
 			RefreshToken: refreshToken,
-		}
+		}, user.UUID)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
@@ -639,16 +654,9 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 
 	newUserUID := utils.GenerateUserUID()
-	// The Google display name isn't guaranteed unique and username has a
-	// UNIQUE constraint — try the raw name first, then fall back to
-	// name+random suffix on collision (same retry-on-conflict shape used for
-	// room invite codes).
-	username := name
-	// The reader doesn't pick this name, so a listed word in it just falls
-	// back to a plain one (report-block R8.1).
-	if moderation.Check(username) != nil {
-		username = "reader"
-	}
+	// Made to fit the sign-up rule, as Apple's are. Accounts from before this
+	// kept the Google name as it came ("Mira Anand"); Edit profile can fix one.
+	username := socialUsername(name)
 	for attempt := 0; ; attempt++ {
 		err = tx.QueryRow(
 			"INSERT INTO users (username, email, isactive, login_type, uuid, google_sub) VALUES ($1, $2, $3, $4, $5, $6) RETURNING username",
@@ -666,7 +674,7 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error": "Failed to generate a unique username"}`, http.StatusInternalServerError)
 			return
 		}
-		username = name + "_" + strings.ToLower(suffix)
+		username = withSuffix(username, suffix)
 	}
 
 	// Initialize user preferences
@@ -694,14 +702,14 @@ func (h *UserHandler) GoogleAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := models.TokenResponse{
+	response := withAccount(models.TokenResponse{
 		Username:     user.Username,
 		Email:        email,
 		Picture:      picture,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		Preferences:  preferencesData,
-	}
+	}, newUserUID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -733,17 +741,6 @@ func (h *UserHandler) RefreshAccessToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Check if refresh token exists in database
-	var count int
-	err = database.DB.QueryRow(
-		"SELECT COUNT(*) FROM refresh_tokens WHERE user_id = $1 AND token = $2 AND expires_at > NOW()",
-		claims.UserID, req.RefreshToken,
-	).Scan(&count)
-	if err != nil || count == 0 {
-		http.Error(w, `{"error": "Invalid or expired refresh token"}`, http.StatusUnauthorized)
-		return
-	}
-
 	// Re-fetch the user's current role rather than trusting a role embedded
 	// in the refresh token, so a role change takes effect on the very next
 	// refresh instead of waiting out the old access token's TTL.
@@ -772,8 +769,15 @@ func (h *UserHandler) RefreshAccessToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer tx.Rollback()
-	if err := storeRefreshToken(tx, claims.UserID, newRefreshToken); err != nil {
+	// Checks the token is still this device's and replaces it in one step,
+	// so two refreshes racing with the same token can't both succeed.
+	rotated, err := rotateRefreshToken(tx, claims.UserID, req.RefreshToken, newRefreshToken)
+	if err != nil {
 		http.Error(w, `{"error": "`+err.Error()+`"}`, http.StatusInternalServerError)
+		return
+	}
+	if !rotated {
+		http.Error(w, `{"error": "Invalid or expired refresh token"}`, http.StatusUnauthorized)
 		return
 	}
 	if err := tx.Commit(); err != nil {
@@ -781,10 +785,12 @@ func (h *UserHandler) RefreshAccessToken(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	response := map[string]string{
-		"accessToken":  accessToken,
-		"refreshToken": newRefreshToken,
-	}
+	// With the account fields, so a session stored before the app kept them
+	// gets its id here (app spec coming-soon R6.2).
+	response := withAccount(models.TokenResponse{
+		AccessToken:  accessToken,
+		RefreshToken: newRefreshToken,
+	}, claims.UserID)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
@@ -887,30 +893,43 @@ func initializeUserPreferences(tx dbExecutor, userID string) (map[string]interfa
 	return preferencesData, nil
 }
 
+// How long a stored refresh token lasts: the same 7 days as the refresh JWT
+// itself (utils.GenerateTokens).
+const refreshTokenTTL = 7 * 24 * time.Hour
+
+// storeRefreshToken keeps a refresh token for one sign-in. Each sign-in
+// gets its own row, so signing in on the iPad doesn't sign the phone out:
+// with one row per account, the next sign-in or refresh anywhere replaced
+// every other device's token (specs/offline-first R12). The reader's expired
+// rows go at the same time, so they don't pile up.
 func storeRefreshToken(tx dbExecutor, userID, refreshToken string) error {
-	expiresAt := time.Now().Add(7 * 24 * time.Hour)
-
-	var tokenID int
-	err := tx.QueryRow(
-		"SELECT id FROM refresh_tokens WHERE user_id = $1 AND expires_at > NOW()",
+	if _, err := tx.Exec(
+		"DELETE FROM refresh_tokens WHERE user_id = $1 AND expires_at <= NOW()",
 		userID,
-	).Scan(&tokenID)
-
-	if err != nil {
-		// No existing token, insert new one
-		_, err = tx.Exec(
-			"INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)",
-			userID, refreshToken, expiresAt,
-		)
+	); err != nil {
 		return err
 	}
-
-	// Update existing token
-	_, err = tx.Exec(
-		"UPDATE refresh_tokens SET token = $1, expires_at = $2 WHERE id = $3",
-		refreshToken, expiresAt, tokenID,
+	_, err := tx.Exec(
+		"INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)",
+		userID, refreshToken, time.Now().Add(refreshTokenTTL),
 	)
 	return err
+}
+
+// rotateRefreshToken swaps the token a device refreshed with for its new one,
+// leaving the reader's other devices alone. False when the old token isn't
+// there (already used, expired, or signed out), which the caller refuses.
+func rotateRefreshToken(tx dbExecutor, userID, oldToken, newToken string) (bool, error) {
+	result, err := tx.Exec(
+		`UPDATE refresh_tokens SET token = $3, expires_at = $4
+		  WHERE user_id = $1 AND token = $2 AND expires_at > NOW()`,
+		userID, oldToken, newToken, time.Now().Add(refreshTokenTTL),
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n == 1, err
 }
 
 // DeleteMe — DELETE /users/me (app spec account-deletion R4–R6).

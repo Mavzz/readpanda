@@ -16,11 +16,11 @@ Authorization: Bearer <access_token>
 |--------|-------|------|-------------|
 | POST | `/signup` | No | Register a new user. Body: `{ username, email, password }` (plaintext over TLS). Username: 3–20 letters, numbers, `.` or `_`, stored lowercase; password ≥ 8 characters. Returns access token, refresh token, and user preferences. Errors carry the field: `400 { error, field }` for a rule broken (`username` / `email` / `password`), `409 { error, field }` for a taken `username` or `email`. |
 | GET | `/signup/available?username=` | No | Whether a username is free: `{ available, suggestion? }` (a nearby free name when taken). `400 { error, field: "username" }` if the name breaks the rules. Rate-limited to 30 requests a minute per client (`429`). |
-| POST | `/auth/login` | No | Login with email/username and password (username matched case-insensitively, exact match first). Returns access token, refresh token, and user data. |
-| POST | `/auth/google` | No | Authenticate via Google ID token. Body: `{ token }`. Creates account on first login. Returns access/refresh tokens. |
+| POST | `/auth/login` | No | Login with email/username and password (username matched case-insensitively, exact match first). Returns access token, refresh token, and user data, including `user_id`, `display_name` and `login_type` (as every sign-in and `/token/refresh` now does). |
+| POST | `/auth/google` | No | Authenticate via Google ID token. Body: `{ token }`. Creates account on first login, with a username made from the Google name to fit the sign-up rule (as for Apple). Returns access/refresh tokens. |
 | POST | `/auth/apple` | No | Sign in with Apple. Body: `{ identity_token, authorization_code?, full_name? }`. Verifies the token against Apple's keys (audience `APPLE_BUNDLE_ID`); finds the account by Apple id, else links one with the same verified email, else creates one (`201`, with preferences). With `APPLE_TEAM_ID`/`APPLE_KEY_ID`/`APPLE_PRIVATE_KEY` set, also stores Apple's refresh token so deleting the account can revoke it. `401` invalid token; `400` if Apple shared no email for a new account. |
 | POST | `/auth/logout` | Yes | Logout the current user. |
-| POST | `/token/refresh` | No | Refresh an expired access token. Body: `{ refresh_token }`. Returns a new access token. |
+| POST | `/token/refresh` | No | Refresh an expired access token. Body: `{ refreshToken }`. Returns `{ accessToken, refreshToken }`: the refresh token is rotated, so the one sent is spent. Each sign-in has its own refresh token, so refreshing on one device leaves the account's other devices signed in. `401` for a spent, expired or signed-out token. |
 
 **Blocked words.** A username, room name or description, or comment containing a word on the list in `internal/moderation/wordlist.go` is refused with `400 { error: "That includes words we don't allow.", code: "blocked_words", field }`. Matching is on whole words, ignoring case, accents and look-alike characters ("Scunthorpe" passes). Apple and Google sign-up, which make the username from the reader's name, fall back to `reader` instead of refusing.
 
@@ -37,6 +37,10 @@ Authorization: Bearer <access_token>
 | POST | `/users/me/blocks` | Yes | Block a reader. Body: `{ user_id }`. `204`, also when already blocked. `400` for yourself or the Deleted reader, `404` for an unknown reader. They aren't told. See **Blocks** under Comments for what it hides. |
 | DELETE | `/users/me/blocks/{userId}` | Yes | Unblock. `204` whether or not they were blocked. |
 | DELETE | `/users/me` | Yes | Delete the caller's account for good, in one transaction. Rooms they created pass to the earliest-joined member (who becomes admin), or are deleted if nobody else is in them; their comments stay, moved to the reserved "Deleted reader" account (`deleted.reader`, id `00000000-…`; see `scripts/migrate_account_deletion.sql`), so replies survive; books they uploaded stay with no uploader. Everything else of theirs (progress, buckets, highlights, tokens, devices, notifications, memberships, blocks either way) is deleted. Reports they made stay, without a reporter. Then, if they signed in with Apple, revokes Apple's token (best effort; logged on failure). `204`, also when the account is already gone. |
+| GET | `/users/me` | Yes | The caller's account: `{ user_id, username, display_name, email, login_type }`. Edit profile reads it on opening, so a session from before sign-ins carried these fields gets them. |
+| PATCH | `/users/me` | Yes | Edit profile. Body: any of `{ display_name, username }`. `display_name` is trimmed, up to 40 characters, and empty clears it. `username` follows the sign-up rule (stored lowercase); its own name in another case is no change; taken (including the reserved name, or taken between the app's check and the save) is `409 { error, field: "username", suggestion }`. Returns `{ user_id, username, display_name, email, login_type }`. Comments and rooms read usernames at query time, so they follow a rename. Requires `scripts/migrate_profile.sql`. |
+| PUT | `/users/me/email` | Yes | Change email. Body: `{ email, current_password }`. Email accounts only: Apple and Google accounts, or a wrong password, get `403 { field: "current_password" }`. `400` for an invalid address, `409` when another account has it. Returns the profile as PATCH does. There's no confirmation email yet. |
+| PUT | `/users/me/password` | Yes | Change password. Body: `{ current_password, new_password }` (8+ characters, else `400`). `403` as for email. `204`. Other signed-in devices stay signed in. |
 
 ---
 
@@ -48,6 +52,7 @@ Authorization: Bearer <access_token>
 | POST | `/books/upload` | Yes | Publish a new book. **JSON** (after `/books/upload-urls`): `book_id`, `title`, `description`, `genre`, `subgenre`, `author_name`, `notify` (default true), `manuscript_key`, `cover_key?`. Checks the files are in storage within the limits. Still accepts the old **multipart form** with `cover` and `manuscript` files, but Cloud Run rejects those bodies over 32 MB. |
 | GET | `/books` | Yes | Get all books for the authenticated user. Returns `{ books: [...] }`. |
 | GET | `/books/all` | Yes | Get all books in the system. Returns `{ books: [...] }`. |
+| GET | `/books/search?q=` | Yes | Search books by title or author (case-insensitive; `%` and `_` match literally). Returns `{ books: [...] }` in `/books/all`'s shape, up to 50: title starting with `q` first, then title containing it, then author containing it, each by title. `q` is trimmed; under 2 characters is `400`. |
 | POST | `/books/seed` | Yes | Seed books from object storage (R2/MinIO). Scans the storage bucket and inserts missing books into the database. |
 | GET | `/books/{bookId}` | Yes | Book detail (8c). Returns `{ book: { book_id, title, description, author_name, page_count, genre, subgenre, cover_image_url, manuscript_url }, in_buckets: [bucketId], friends_read: { count, friends: [{ user_id, username }] } }`. `in_buckets` lists the caller's own buckets holding the book. `friends_read` counts room-mates (anyone sharing a room with the caller) with a reading position in the book, naming the 3 most recent. `author_name` / `page_count` are null when unknown. |
 
@@ -234,6 +239,14 @@ actually opened and declines to draw anchors from a different edition.
 | POST | `/reports` | Yes | Report a comment, reader or room. Body: `{ target_type: "comment" \| "user" \| "room", target_id, room_id?, reason, details? }`. `reason` is `harassment`, `hate`, `sexual`, `violence`, `self_harm`, `spam` or `other`; `details` (≤ 500 characters) is required for `other`. The target must be something the caller can see: a live comment in their room, a reader they share a room with (`room_id`, if sent, one of those rooms), a room they're in or an open room. Stores a copy of the text (the comment, the username, or the room's name and description) that outlives it. `201 { id }`; `200 { status: "already_reported" }` if the caller already has an open report on it (no second alert); `400` bad reason or details, or your own content, yourself or the Deleted reader; `404` not visible; `429` after 30 in 24 hours. Every admin is notified (see below). |
 
 ---
+
+## Reading progress
+
+| Method | Route | Auth | Description |
+|--------|-------|------|-------------|
+| GET | `/progress` | Yes | Every book the caller has a position in, most recently read first, with the book's title, cover and manuscript url. |
+| PUT | `/progress/{bookId}` | Yes | Publish where the caller is in a book. Body: `{ current_page, total_pages, read_at }`. `current_page` is 0-based. A `total_pages` of 0 keeps the length already known. `read_at` (RFC 3339, optional) is when the page was read; the app sends it because saves made offline arrive late. A save read before the stored `last_read_at` keeps the stored page, length and time. Missing, unparseable or future `read_at` means now. `furthest_page` only climbs, late saves included. Returns the stored row with `progress_pct` and `newly_unlocked` (comments the save carried the reader past). `200`; `400` negative pages; `404` unknown book. |
+| GET | `/room/{id}/progress` | Yes | Every member's place in the room's current book, including members who haven't opened it (page 0). Admin first. `403` non-member. |
 
 ## Highlights
 
