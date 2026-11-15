@@ -390,6 +390,28 @@ CREATE TABLE public.user_blocks (
 
 
 --
+-- Name: user_suspensions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.user_suspensions (
+    id character varying(50) NOT NULL,
+    user_id uuid NOT NULL,
+    suspended_at timestamp without time zone,
+    suspended_by uuid,
+    report_id character varying(50),
+    note text,
+    ended boolean DEFAULT false NOT NULL,
+    reinstated_at timestamp without time zone,
+    reinstated_by uuid,
+    reinstate_note text,
+    source character varying(10) NOT NULL,
+    CONSTRAINT user_suspensions_note_check CHECK (((note IS NULL) OR (char_length(note) <= 500))),
+    CONSTRAINT user_suspensions_reinstate_note_check CHECK (((reinstate_note IS NULL) OR (char_length(reinstate_note) <= 500))),
+    CONSTRAINT user_suspensions_source_check CHECK (((source)::text = ANY (ARRAY['report'::text, 'users'::text, 'backfill'::text])))
+);
+
+
+--
 -- Name: user_bucket_books; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -633,6 +655,14 @@ ALTER TABLE ONLY public.user_bucket_books
 
 
 --
+-- Name: user_suspensions user_suspensions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_suspensions
+    ADD CONSTRAINT user_suspensions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: user_buckets user_buckets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -768,6 +798,55 @@ CREATE UNIQUE INDEX content_reports_open_once ON public.content_reports USING bt
 --
 
 CREATE INDEX content_reports_status_idx ON public.content_reports USING btree (status, created_at DESC);
+
+
+--
+-- Name: content_reports_target_user_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX content_reports_target_user_idx ON public.content_reports USING btree (target_user_id, created_at DESC);
+
+
+--
+-- Name: content_reports_room_target_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX content_reports_room_target_idx ON public.content_reports USING btree (target_id) WHERE ((target_type)::text = 'room'::text);
+
+
+--
+-- Name: content_reports_resolved_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX content_reports_resolved_at_idx ON public.content_reports USING btree (resolved_at);
+
+
+--
+-- Name: user_suspensions_open_once; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX user_suspensions_open_once ON public.user_suspensions USING btree (user_id) WHERE (NOT ended);
+
+
+--
+-- Name: user_suspensions_user_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX user_suspensions_user_idx ON public.user_suspensions USING btree (user_id, suspended_at DESC NULLS LAST);
+
+
+--
+-- Name: user_suspensions_suspended_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX user_suspensions_suspended_at_idx ON public.user_suspensions USING btree (suspended_at);
+
+
+--
+-- Name: user_suspensions_reinstated_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX user_suspensions_reinstated_at_idx ON public.user_suspensions USING btree (reinstated_at);
 
 
 --
@@ -1096,6 +1175,38 @@ ALTER TABLE ONLY public.user_buckets
 
 ALTER TABLE ONLY public.user_preferences
     ADD CONSTRAINT user_preference_fkey FOREIGN KEY (user_id) REFERENCES public.users(uuid) ON DELETE CASCADE;
+
+
+--
+-- Name: user_suspensions user_suspensions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_suspensions
+    ADD CONSTRAINT user_suspensions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(uuid) ON DELETE CASCADE;
+
+
+--
+-- Name: user_suspensions user_suspensions_suspended_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_suspensions
+    ADD CONSTRAINT user_suspensions_suspended_by_fkey FOREIGN KEY (suspended_by) REFERENCES public.users(uuid) ON DELETE SET NULL;
+
+
+--
+-- Name: user_suspensions user_suspensions_reinstated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_suspensions
+    ADD CONSTRAINT user_suspensions_reinstated_by_fkey FOREIGN KEY (reinstated_by) REFERENCES public.users(uuid) ON DELETE SET NULL;
+
+
+--
+-- Name: user_suspensions user_suspensions_report_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_suspensions
+    ADD CONSTRAINT user_suspensions_report_id_fkey FOREIGN KEY (report_id) REFERENCES public.content_reports(id) ON DELETE SET NULL;
 
 
 --

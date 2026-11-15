@@ -168,7 +168,11 @@ func NewRouter(cfg *config.Config) http.Handler {
 	router.HandleFunc(apiPrefix+"/admin/tables/{table}/rows", adminHandler.DeleteTableRow).Methods("DELETE")
 	router.HandleFunc(apiPrefix+"/admin/users/{uuid}", adminHandler.GetUserDetail).Methods("GET")
 	router.HandleFunc(apiPrefix+"/admin/users/{uuid}", adminHandler.SetUserActive).Methods("PATCH")
+	router.HandleFunc(apiPrefix+"/admin/users/{uuid}/suspensions", adminHandler.GetUserSuspensions).Methods("GET")
+	router.HandleFunc(apiPrefix+"/admin/suspensions", adminHandler.ListSuspensions).Methods("GET")
+	router.HandleFunc(apiPrefix+"/admin/moderation/stats", adminHandler.ModerationStats).Methods("GET")
 	router.HandleFunc(apiPrefix+"/admin/reports", adminHandler.ListReports).Methods("GET")
+	router.HandleFunc(apiPrefix+"/admin/reports/targets", adminHandler.ListReportTargets).Methods("GET")
 	router.HandleFunc(apiPrefix+"/admin/reports/{id}/resolve", adminHandler.ResolveReport).Methods("POST")
 
 	return router

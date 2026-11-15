@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const confirmMock = vi.fn();
@@ -79,6 +79,16 @@ describe('ReportsPage', () => {
     expect(resolveReport).toHaveBeenCalledWith('rp_1', 'remove_comment');
   });
 
+  it('suspends through the note dialog, not the confirm (portal-moderation R3.2)', async () => {
+    const user = renderPage([commentReport]);
+    await user.click(screen.getByRole('button', { name: 'Suspend alice' }));
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Suspend alice' })).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Note (optional)'), 'repeat');
+    await user.click(screen.getByRole('button', { name: 'Suspend' }));
+    expect(resolveReport).toHaveBeenCalledWith('rp_1', 'suspend_user', 'repeat');
+  });
+
   it('says what went wrong', async () => {
     resolveReport.mockRejectedValue(new Error('This report is already closed'));
     confirmMock.mockResolvedValue(true);
@@ -92,5 +102,83 @@ describe('ReportsPage', () => {
     expect(screen.getByText('Removed the comment')).toBeInTheDocument();
     expect(screen.getByText('Removed by ReadPanda')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+  });
+});
+
+// Shows where the page is, so tests can read the URL.
+const Where = () => {
+  const loc = useLocation();
+  return <output data-testid="where">{loc.pathname + loc.search}</output>;
+};
+const where = () => screen.getByTestId('where').textContent;
+
+const renderAt = (entry, reports = []) => {
+  useReports.mockReturnValue({ data: { reports, open_count: 7, has_more: false }, isLoading: false, error: null });
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <MemoryRouter initialEntries={[entry]}><ReportsPage /><Where /></MemoryRouter>
+    </QueryClientProvider>,
+  );
+  return userEvent.setup();
+};
+
+describe('ReportsPage tabs (portal-moderation R8.1, R9.1, R6.2)', () => {
+  it('has the five tabs, Queue first, and opens the one in the URL', () => {
+    renderAt('/reports?tab=rooms');
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((t) => t.textContent)).toEqual(['Queue', 'Readers', 'Rooms', 'Suspended', 'Stats']);
+    expect(screen.getByRole('tab', { name: 'Rooms' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tabpanel')).toHaveAccessibleName('Rooms');
+  });
+
+  it('moves between tabs with the keyboard', async () => {
+    const user = renderAt('/reports');
+    const queue = screen.getByRole('tab', { name: 'Queue' });
+    expect(queue).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('tab', { name: 'Stats' })).toHaveAttribute('tabindex', '-1');
+
+    queue.focus();
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByRole('tab', { name: 'Readers' })).toHaveFocus();
+    expect(where()).toBe('/reports?tab=readers');
+    await user.keyboard('{ArrowLeft}{ArrowLeft}');
+    expect(screen.getByRole('tab', { name: 'Stats' })).toHaveFocus();
+    await user.keyboard('{Home}');
+    expect(where()).toBe('/reports?tab=queue');
+  });
+
+  it('keeps the status in the URL', async () => {
+    const user = renderAt('/reports');
+    await user.click(screen.getByRole('button', { name: 'Dismissed' }));
+    expect(where()).toBe('/reports?tab=queue&status=dismissed');
+    expect(useReports).toHaveBeenLastCalledWith('dismissed', { user: undefined, room: undefined });
+  });
+});
+
+describe('ReportsPage queue filter (portal-moderation R6.1)', () => {
+  const aliceReport = { ...commentReport, status: 'actioned', action: 'remove_comment' };
+
+  it('narrows to one reader, under every status, with a chip to clear it', async () => {
+    const user = renderAt('/reports?tab=queue&status=all&about_user=u-alice', [aliceReport, roomReport]);
+    expect(useReports).toHaveBeenLastCalledWith('all', { user: 'u-alice', room: undefined });
+    expect(screen.getByText('About alice')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
+    // The badge count is the whole queue's, so it's not shown on a filtered one.
+    expect(screen.getByRole('button', { name: 'Open' })).toHaveTextContent(/^Open$/);
+
+    await user.click(screen.getByRole('button', { name: 'Show every report' }));
+    expect(where()).toBe('/reports?tab=queue');
+    expect(screen.queryByText('About alice')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'All' })).toBeNull();
+  });
+
+  it('names a room from its reports', () => {
+    renderAt('/reports?tab=queue&status=open&about_room=rm_2', [roomReport]);
+    expect(screen.getByText('About Bad room')).toBeInTheDocument();
+  });
+
+  it('says when nothing is about them', () => {
+    renderAt('/reports?tab=queue&status=open&about_user=u-x', []);
+    expect(screen.getByText('No open reports about this reader')).toBeInTheDocument();
   });
 });

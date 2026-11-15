@@ -18,6 +18,11 @@
   --rp-surface-3: #222a3e;
   --rp-hairline: #1b2338;
   --rp-dashed: #2a3450;
+  /* Chart series (portal-moderation Stats). The brand gold is too light for
+     a mark on this surface, so slot 1 is a darker gold step; both checked
+     with the dataviz validator against surface-1 (CVD ΔE 27, 3:1 contrast). */
+  --rp-series-1: #c98500;
+  --rp-series-2: #3987e5;
 
   /* Ink */
   --rp-ink-title: #dae2fd;
@@ -50,6 +55,8 @@
   --color-surface-3: var(--rp-surface-3);
   --color-hairline: var(--rp-hairline);
   --color-dashed: var(--rp-dashed);
+  --color-series-1: var(--rp-series-1);
+  --color-series-2: var(--rp-series-2);
   --color-ink-title: var(--rp-ink-title);
   --color-ink-body: var(--rp-ink-body);
   --color-ink-meta: var(--rp-ink-meta);
