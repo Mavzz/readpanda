@@ -1,21 +1,68 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../services/api';
 import { RowsTable } from '../components/dataTable';
 import { useDeleteRow } from '../components/useDeleteRow';
-import { useConfirm } from '../components/useConfirm';
-import { isSuspended, setUserActive } from '../services/moderation';
-import { Banner, Button, Card, Eyebrow, Loading, PageHeader, Section, Tag, TextAction } from '../components/ui';
+import { useSuspendReader } from '../components/useSuspendReader';
+import { isSuspended, useUserSuspensions } from '../services/moderation';
+import { Banner, Button, Card, Eyebrow, List, ListItem, Loading, PageHeader, Section, Tag, TextAction } from '../components/ui';
+
+const when = (iso) => new Date(iso).toLocaleString();
+const timesLabel = (n) => (n === 0 ? 'Never suspended' : `Suspended ${n} time${n === 1 ? '' : 's'}`);
+const reportsAbout = (uuid) => `/reports?tab=queue&status=all&about_user=${uuid}`;
+
+// Notes are what admins wrote, shown as text.
+const Note = ({ children }) => (
+  <span className="text-[13px] text-ink-body whitespace-pre-wrap break-words">“{children}”</span>
+);
+
+// One reader's suspensions, open one first, then newest first
+// (portal-moderation R3.1).
+const SuspensionHistory = ({ uuid }) => {
+  const { data, isLoading, error, refetch } = useUserSuspensions(uuid);
+  if (isLoading) return <Section title="Suspension history"><Loading /></Section>;
+  if (error) return <Section title="Suspension history"><Banner message={error.message} onRetry={refetch} /></Section>;
+  const list = data.suspensions;
+  return (
+    <Section title={timesLabel(data.count)}>
+      {list.length > 0 && (
+        <List>
+          {list.map((s) => (
+            <ListItem key={s.id} className="flex flex-col gap-1.5">
+              <span className="flex flex-wrap items-center gap-2 text-[13px] text-ink-title">
+                <span className="font-bold">
+                  {s.suspended_at ? `Suspended ${when(s.suspended_at)}` : 'Suspended before history began'}
+                </span>
+                {s.suspended_by && <span className="text-ink-holder">by {s.suspended_by.username}</span>}
+                {!s.ended && <Tag>Still suspended</Tag>}
+                {s.report_id && (
+                  <Link to={reportsAbout(uuid)} className="text-link font-bold hover:underline">From a report</Link>
+                )}
+              </span>
+              {s.note && <Note>{s.note}</Note>}
+              {s.ended && (
+                <span className="flex flex-wrap items-center gap-2 text-[13px] text-ink-body">
+                  {s.reinstated_at ? `Reinstated ${when(s.reinstated_at)}` : 'Reinstated, date unknown'}
+                  {s.reinstated_by && <span className="text-ink-holder">by {s.reinstated_by.username}</span>}
+                </span>
+              )}
+              {s.reinstate_note && <Note>{s.reinstate_note}</Note>}
+            </ListItem>
+          ))}
+        </List>
+      )}
+    </Section>
+  );
+};
 
 const UserDetailPage = () => {
   const { uuid } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const deleteRow = useDeleteRow();
-  const confirm = useConfirm();
+  const { suspendReader, dialog } = useSuspendReader();
   const [banner, setBanner] = useState('');
-  const [saving, setSaving] = useState(false);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['admin-user', uuid],
@@ -36,23 +83,10 @@ const UserDetailPage = () => {
     }
   };
 
-  // Suspend or reinstate (report-block R9.6, R10.4).
-  const toggleSuspended = async (user) => {
-    const suspending = !isSuspended(user);
-    const ok = await confirm(suspending
-      ? { title: 'Suspend reader', message: `${user.username} is signed out and can't sign in or post until you reinstate them. Their comments stay.`, action: 'Suspend' }
-      : { title: 'Reinstate reader', message: `${user.username} can sign in and post again.`, action: 'Reinstate' });
-    if (!ok) return;
-    setSaving(true);
-    try {
-      await setUserActive(user.uuid, !suspending);
-      refresh();
-    } catch (err) {
-      setBanner(`Couldn't change that: ${err.message}`);
-    } finally {
-      setSaving(false);
-    }
-  };
+  // Suspend or reinstate (report-block R9.6, R10.4), with an optional note
+  // (portal-moderation R3.2). The dialog makes the call and reloads.
+  const toggleSuspended = (user) =>
+    suspendReader({ username: user.username, suspending: !isSuspended(user), uuid: user.uuid });
 
   const back = <TextAction onClick={() => navigate('/users')} className="self-start">← All users</TextAction>;
 
@@ -67,8 +101,9 @@ const UserDetailPage = () => {
       {back}
       <PageHeader title={user.username} subtitle={user.email}>
         {suspended && <Tag muted>Suspended</Tag>}
+        <Link to={reportsAbout(user.uuid)} className="text-[13px] font-bold text-link hover:underline">See reports about them</Link>
         {user.username !== 'deleted.reader' && (
-          <Button variant="secondary" disabled={saving} onClick={() => toggleSuspended(user)}>
+          <Button variant="secondary" onClick={() => toggleSuspended(user)}>
             {suspended ? 'Reinstate' : 'Suspend'}
           </Button>
         )}
@@ -78,6 +113,7 @@ const UserDetailPage = () => {
       </PageHeader>
 
       <Banner message={banner} onDismiss={() => setBanner('')} />
+      {dialog}
 
       <Card>
         <dl className="m-0 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-4">
@@ -91,6 +127,8 @@ const UserDetailPage = () => {
           ))}
         </dl>
       </Card>
+
+      {user.username !== 'deleted.reader' && <SuspensionHistory uuid={user.uuid} />}
 
       {related.map((r) => (
         <Section

@@ -6,7 +6,9 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -54,8 +56,10 @@ type adminReport struct {
 	CommentState string `json:"comment_state,omitempty"`
 }
 
-// ListReports — GET /admin/reports?status=open|actioned|dismissed|all&limit=&offset=
-// Newest first; open by default. open_count is for the portal's nav badge.
+// ListReports — GET /admin/reports?status=open|actioned|dismissed|all&limit=&offset=&about_user=|about_room=
+// Newest first; open by default. about_user or about_room narrows it to
+// the reports about one reader or room (portal-moderation R6.1). open_count
+// is for the portal's nav badge, so it always counts every open report.
 func (h *AdminHandler) ListReports(w http.ResponseWriter, r *http.Request) {
 	if _, ok := utils.RequireAdmin(w, r, h.Config.JWTSecret); !ok {
 		return
@@ -78,6 +82,11 @@ func (h *AdminHandler) ListReports(w http.ResponseWriter, r *http.Request) {
 	if offset < 0 {
 		offset = 0
 	}
+	aboutUser, aboutRoom := q.Get("about_user"), q.Get("about_room")
+	if aboutUser != "" && aboutRoom != "" {
+		adminError(w, http.StatusBadRequest, "Choose a reader or a room, not both")
+		return
+	}
 
 	rows, err := database.DB.Query(
 		`SELECT cr.id, cr.target_type, cr.target_id, cr.reason, COALESCE(cr.details, ''), cr.snapshot,
@@ -98,9 +107,11 @@ func (h *AdminHandler) ListReports(w http.ResponseWriter, r *http.Request) {
 		   LEFT JOIN rooms rm ON rm.id = cr.room_id
 		   LEFT JOIN book_comments c ON cr.target_type = 'comment' AND c.id = cr.target_id
 		  WHERE ($1 = 'all' OR cr.status = $1)
+		    AND ($4 = '' OR cr.target_user_id::text = $4)
+		    AND ($5 = '' OR (cr.target_type = 'room' AND cr.target_id = $5))
 		  ORDER BY cr.created_at DESC, cr.id
 		  LIMIT $2 OFFSET $3`,
-		status, limit+1, offset,
+		status, limit+1, offset, aboutUser, aboutRoom,
 	)
 	if err != nil {
 		adminDBError(w, err)
@@ -187,9 +198,16 @@ func (h *AdminHandler) ResolveReport(w http.ResponseWriter, r *http.Request) {
 	reportID := mux.Vars(r)["id"]
 	var req struct {
 		Action string `json:"action"`
+		Note   string `json:"note"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		adminError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	// The note only goes with a suspension (portal-moderation R1.1).
+	note, noteOK := suspensionNote(req.Note)
+	if req.Action == "suspend_user" && !noteOK {
+		adminError(w, http.StatusBadRequest, noteTooLong)
 		return
 	}
 
@@ -242,7 +260,8 @@ func (h *AdminHandler) ResolveReport(w http.ResponseWriter, r *http.Request) {
 			adminError(w, http.StatusBadRequest, "That account no longer exists")
 			return
 		}
-		err = setSuspended(tx, targetUser.String, true)
+		err = setSuspended(tx, targetUser.String, true,
+			suspendAction{adminID: adminID, reportID: reportID, note: note, source: "report"})
 	default:
 		adminError(w, http.StatusBadRequest, "That action doesn't fit this report")
 		return
@@ -402,21 +421,61 @@ func removeReportedComment(tx *sql.Tx, commentID string) error {
 	return removeComment(tx, commentID, parentID.String, "moderator")
 }
 
-// setSuspended suspends (or reinstates) an account. Suspending also deletes
-// its refresh tokens, so the app is signed out at its next refresh (R10.2).
-func setSuspended(tx *sql.Tx, userID string, suspended bool) error {
+// suspendAction is who suspended or reinstated someone, and why, for their
+// suspension history (portal-moderation R1).
+type suspendAction struct {
+	adminID  string
+	reportID string // the report it came from, if any
+	note     string // admins only; the reader never sees it
+	source   string // "report" or "users"
+}
+
+const (
+	maxSuspensionNote = 500
+	noteTooLong       = "Keep the note to 500 characters"
+)
+
+// suspensionNote trims an admin's note. ok is false when it's too long
+// (portal-moderation R1.4).
+func suspensionNote(raw string) (note string, ok bool) {
+	note = strings.TrimSpace(raw)
+	return note, utf8.RuneCountInString(note) <= maxSuspensionNote
+}
+
+// setSuspended suspends (or reinstates) an account and keeps its history in
+// the same transaction, so a reader is suspended exactly when they have an
+// open suspension (portal-moderation R1.8). Suspending also deletes its
+// refresh tokens, so the app is signed out at its next refresh (R10.2).
+func setSuspended(tx *sql.Tx, userID string, suspended bool, act suspendAction) error {
 	if _, err := tx.Exec(`UPDATE users SET isactive = $2, updated_at = now() WHERE uuid = $1`, userID, !suspended); err != nil {
 		return err
 	}
 	if !suspended {
-		return nil
+		// Nothing open is fine: another admin got there first.
+		_, err := tx.Exec(
+			`UPDATE user_suspensions
+			    SET ended = true, reinstated_at = now(), reinstated_by = $2, reinstate_note = NULLIF($3, '')
+			  WHERE user_id = $1 AND NOT ended`,
+			userID, act.adminID, act.note,
+		)
+		return err
+	}
+	// Already suspended keeps the one record it has (R1.3).
+	if _, err := tx.Exec(
+		`INSERT INTO user_suspensions (id, user_id, suspended_at, suspended_by, report_id, note, source)
+		 VALUES ($1, $2, now(), $3, NULLIF($4, ''), NULLIF($5, ''), $6)
+		 ON CONFLICT (user_id) WHERE NOT ended DO NOTHING`,
+		"su_"+uuid.New().String(), userID, act.adminID, act.reportID, act.note, act.source,
+	); err != nil {
+		return err
 	}
 	_, err := tx.Exec(`DELETE FROM refresh_tokens WHERE user_id = $1`, userID)
 	return err
 }
 
-// SetUserActive — PATCH /admin/users/{uuid} {"isactive"}: suspend or
-// reinstate from the Users page (R9.6, R10.4).
+// SetUserActive — PATCH /admin/users/{uuid} {"isactive", "note"}: suspend or
+// reinstate from the Users page (R9.6, R10.4), with an optional note for
+// the history (portal-moderation R1.1, R1.2).
 func (h *AdminHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 	adminID, ok := utils.RequireAdmin(w, r, h.Config.JWTSecret)
 	if !ok {
@@ -424,10 +483,16 @@ func (h *AdminHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := mux.Vars(r)["uuid"]
 	var req struct {
-		IsActive *bool `json:"isactive"`
+		IsActive *bool  `json:"isactive"`
+		Note     string `json:"note"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.IsActive == nil {
 		adminError(w, http.StatusBadRequest, "isactive is required")
+		return
+	}
+	note, ok := suspensionNote(req.Note)
+	if !ok {
+		adminError(w, http.StatusBadRequest, noteTooLong)
 		return
 	}
 	if _, err := uuid.Parse(userID); err != nil {
@@ -454,7 +519,8 @@ func (h *AdminHandler) SetUserActive(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusNotFound, "User not found")
 		return
 	}
-	if err := setSuspended(tx, userID, !*req.IsActive); err != nil {
+	if err := setSuspended(tx, userID, !*req.IsActive,
+		suspendAction{adminID: adminID, note: note, source: "users"}); err != nil {
 		adminDBError(w, err)
 		return
 	}
